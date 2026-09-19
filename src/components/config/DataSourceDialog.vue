@@ -442,7 +442,7 @@ async function loadSourceDetails(sourceKey: string) {
       daimonEnabled[daimon.daimonType] = true
       daimonSchemas[daimon.daimonType] = daimon.tableQualifier
     }
-  } catch (error) {
+  } catch {
     emit('error', tv('executionStatus.values.FAILED'))
     handleClose()
   }

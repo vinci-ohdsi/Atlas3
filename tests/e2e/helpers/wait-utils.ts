@@ -168,7 +168,7 @@ export async function waitForLoadingComplete(
 
     // Wait for it to disappear
     await loadingElement.waitFor({ state: 'hidden', timeout })
-  } catch (e) {
+  } catch {
     // If loading indicator never appeared, continue
   }
 }

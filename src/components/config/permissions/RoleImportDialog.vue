@@ -389,7 +389,7 @@ function handleConflictResolution() {
       // Move to validation
       hasConflict.value = false
       validationComplete.value = true
-    } catch (error) {
+    } catch {
       errorMessage.value = tv(
         'components.config.permissions.updateRoleNameFailed',
         'Failed to update role name'
