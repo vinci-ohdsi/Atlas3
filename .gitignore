@@ -1,3 +1,5 @@
+*config-local.json
+
 # Dependencies
 .worktrees/
 node_modules/
