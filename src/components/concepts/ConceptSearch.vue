@@ -119,6 +119,7 @@ import { useI18n } from '@/composables/useI18n'
 import { useConceptSearchStore } from '@/stores/concept-search'
 import { useConceptSetsStore } from '@/stores/concept-sets'
 import { useWebAPIStore } from '@/stores/webapi'
+import { useStudyAgentConceptSetStore } from '@/stores/study-agent-concept-set'
 import { getSourceKey } from '@/config/webapi'
 import ConceptTable from './ConceptTable.vue'
 import ConceptFacetFilters from './ConceptFacetFilters.vue'
@@ -134,6 +135,7 @@ const { t } = useI18n()
 const store = useConceptSearchStore()
 const conceptSetsStore = useConceptSetsStore()
 const webapiStore = useWebAPIStore()
+const studyAgentStore = useStudyAgentConceptSetStore()
 const selectedSourceKey = computed(
   () => webapiStore.getValidVocabularySource() || getSourceKey() || '',
 )
@@ -207,10 +209,30 @@ function onSearchInput(value: string | null) {
 }
 
 function onSearch() {
+  const trimmed = searchInput.value.trim()
+  if (trimmed.toLowerCase().startsWith('/ohdsi ')) {
+    conceptSetsStore.openCreateEditor()
+    studyAgentStore.queueNarrative(trimmed)
+    // Start the first request here rather than waiting for the drawer tab to
+    // mount. A lazy VWindow child can otherwise miss the queued prompt.
+    void studyAgentStore.start({
+      command: '/ohdsi',
+      message: trimmed.slice('/ohdsi'.length).trim(),
+      ui_context: {
+        route: 'concepts',
+        tab: 'search',
+        mode: 'new',
+        ...(selectedSourceKey.value ? { source_key: selectedSourceKey.value } : {}),
+      },
+    }).catch(() => {
+      // The assistant store retains the user-facing error for the drawer.
+    })
+    return
+  }
   if (!isSearchValid.value) return
 
   // Immediate search when user clicks button or presses Enter
-  store.search(searchInput.value.trim())
+  store.search(trimmed)
 }
 
 function onClear() {

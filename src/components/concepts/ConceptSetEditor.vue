@@ -238,6 +238,13 @@
                   />
                   {{ t('search.tabs.search', 'Search') }}
                 </AtlasTab>
+                <AtlasTab value="assistant">
+                  <AtlasIcon
+                    start
+                    icon="mdi-robot-outline"
+                  />
+                  /ohdsi
+                </AtlasTab>
                 <AtlasTab value="recommend">
                   <AtlasIcon
                     start
@@ -334,6 +341,15 @@
                     @add-concepts="onAddConcepts"
                     @remove-concept="onRemoveConcept"
                     @view-concept="onViewConcept"
+                  />
+                </v-window-item>
+
+                <v-window-item value="assistant">
+                  <StudyAgentConceptSetTab
+                    :active="activeTab === 'assistant'"
+                    :mode="isEditMode ? 'extension' : 'new'"
+                    :concept-set-id="props.conceptSet?.id"
+                    :source-key="sourceKey"
                   />
                 </v-window-item>
 
@@ -727,6 +743,7 @@ import IncludedConceptsTable from './IncludedConceptsTable.vue'
 import IncludedSourceCodesTable from './IncludedSourceCodesTable.vue'
 import RecommendTab from './RecommendTab.vue'
 import CompareTab from './CompareTab.vue'
+import StudyAgentConceptSetTab from './StudyAgentConceptSetTab.vue'
 import ConceptDetailContent from './detail/ConceptDetailContent.vue'
 import { AtlasButton, AtlasBadge, AtlasChip, AtlasDialog, AtlasIcon, AtlasIconButton, AtlasSpacer, AtlasTab, AtlasTabs, AtlasTextField, AtlasTooltip } from '@/components/ui'
 import VersionsTabContent from '@/components/versions/VersionsTabContent.vue'
@@ -734,6 +751,7 @@ import { getVersions as getConceptSetVersions } from '@/services/concept-set-ver
 import { getConceptsByIds, getConceptsBySourceCodes } from '@/services/concept-search.service'
 import { useWebAPIStore } from '@/stores/webapi'
 import { getSourceKey as getDefaultSourceKey } from '@/config/webapi'
+import { useStudyAgentConceptSetStore } from '@/stores/study-agent-concept-set'
 import {
   parsePastedIds,
   parsePastedSourceCodes,
@@ -742,6 +760,7 @@ import {
 
 const { t, tv } = useI18n()
 const webapiStore = useWebAPIStore()
+const studyAgentStore = useStudyAgentConceptSetStore()
 
 // ============================================================================
 // Props & Emits
@@ -808,6 +827,13 @@ function onViewConcept(payload: { conceptId: number; sourceKey: string }) {
 // it consistently across browsers — without this manual lock, wheel/touch
 // scroll inside the panel falls through to the cohort builder page behind it.
 watch(
+  () => studyAgentStore.pendingNarrative,
+  narrative => {
+    if (narrative && props.modelValue) activeTab.value = 'assistant'
+  },
+)
+
+watch(
   () => props.modelValue,
   (open) => {
     if (!open) {
@@ -821,7 +847,11 @@ watch(
       // rather than the `isEditMode` computed, which is declared later (this
       // immediate watcher runs during setup, before that binding exists).
       const isExisting = props.conceptSet?.id !== undefined && props.conceptSet?.id !== null
-      activeTab.value = isExisting ? 'selected' : 'search'
+      activeTab.value = studyAgentStore.pendingNarrative
+        ? 'assistant'
+        : isExisting
+          ? 'selected'
+          : 'search'
       document.body.style.overflow = 'hidden'
     }
   },
