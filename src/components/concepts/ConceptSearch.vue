@@ -120,6 +120,7 @@ import { useConceptSearchStore } from '@/stores/concept-search'
 import { useConceptSetsStore } from '@/stores/concept-sets'
 import { useWebAPIStore } from '@/stores/webapi'
 import { useStudyAgentConceptSetStore } from '@/stores/study-agent-concept-set'
+import { atlasConceptSetInteractionProfile } from '@/models/study-agent.types'
 import { getSourceKey } from '@/config/webapi'
 import ConceptTable from './ConceptTable.vue'
 import ConceptFacetFilters from './ConceptFacetFilters.vue'
@@ -223,6 +224,7 @@ function onSearch() {
         tab: 'search',
         mode: 'new',
         ...(selectedSourceKey.value ? { source_key: selectedSourceKey.value } : {}),
+        interaction_profile: atlasConceptSetInteractionProfile,
       },
     }).catch(() => {
       // The assistant store retains the user-facing error for the drawer.

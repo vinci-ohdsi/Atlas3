@@ -350,6 +350,8 @@
                     :mode="isEditMode ? 'extension' : 'new'"
                     :concept-set-id="props.conceptSet?.id"
                     :source-key="sourceKey"
+                    :expression-summary="studyAgentExpressionSummary"
+                    @proposal-applied="onStudyAgentProposalApplied"
                   />
                 </v-window-item>
 
@@ -756,11 +758,27 @@ import {
   parsePastedIds,
   parsePastedSourceCodes,
   parseConceptSetJson,
+  parseConceptSetObject,
 } from './concept-set-import'
 
 const { t, tv } = useI18n()
 const webapiStore = useWebAPIStore()
 const studyAgentStore = useStudyAgentConceptSetStore()
+
+const studyAgentExpressionSummary = computed(() => ({
+  selected_item_count: store.currentSet?.items?.length ?? 0,
+  selected_items: (store.currentSet?.items ?? []).slice(0, 100).map(item => ({
+    concept_id: item.conceptId,
+    concept_name: item.conceptName,
+    concept_code: item.conceptCode,
+    vocabulary_id: item.vocabularyId,
+    domain_id: item.domainId,
+    concept_class_id: item.conceptClassId,
+    is_excluded: item.isExcluded,
+    include_descendants: item.includeDescendants,
+    include_mapped: item.includeMapped,
+  })),
+}))
 
 // ============================================================================
 // Props & Emits
@@ -1182,6 +1200,9 @@ async function onSave() {
     if (result) {
       const savedId = result?.id
       if (savedId !== undefined && savedId !== null) {
+        if (studyAgentStore.appliedReviewRevision !== null) {
+          await studyAgentStore.finalizeSavedConceptSet(savedId)
+        }
         const tagResult = await store.syncTags(savedId, tagsBeforeSave, tagsToPersist)
         if (!tagResult.success) {
           notify.danger(tv('conceptSets.tagUpdateFailed', 'Failed to update tags'), {
@@ -1194,6 +1215,10 @@ async function onSave() {
       emit('save')
       emit('update:modelValue', false)
     }
+  } catch (error) {
+    notify.danger('Concept set was saved, but /ohdsi provenance could not be recorded', {
+      message: error instanceof Error ? error.message : undefined,
+    })
   } finally {
     loading.value = false
   }
@@ -1283,6 +1308,22 @@ function onAddConcepts(concepts: Concept[], flags?: ConceptAddFlags) {
   }
   hasUnsavedChanges.value = true
   showResultAfterFirstAdd(wasEmpty)
+}
+
+function onStudyAgentProposalApplied(expression: unknown) {
+  // WebAPI returned the exact stored review revision after Java/Circe validation.
+  // For a saved set this is the server-merged expression; no local policy is
+  // silently discarded before the user explicitly reviews and saves it.
+  if (!isEditMode.value && (store.currentSet?.items.length ?? 0) > 0) return
+  const parsed = parseConceptSetObject(expression)
+  if (!parsed.ok || !store.currentSet) {
+    notify.danger('Unable to initialize the /ohdsi proposal', { message: parsed.error })
+    return
+  }
+  store.currentSet.items = parsed.items
+  hasUnsavedChanges.value = true
+  activeTab.value = 'selected'
+  void store.resolveIncluded(sourceKey.value)
 }
 
 /**

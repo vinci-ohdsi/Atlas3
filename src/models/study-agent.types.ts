@@ -10,15 +10,51 @@ export interface StudyAgentConceptSetDialogue {
   cautions?: string[]
   suggested_next_actions?: string[]
   follow_up_plan?: string
+  questions?: StudyAgentConceptSetQuestion[]
   artifact_requests?: string[]
+}
+
+export interface StudyAgentConceptSetQuestion {
+  id: string
+  prompt: string
+  options: string[]
+}
+
+export interface StudyAgentConceptSetDialogueMessage {
+  actor: 'user' | 'assistant'
+  message: string
 }
 
 export interface StudyAgentConceptSetSessionResponse {
   session_id: string
   state: string
+  narrative?: string
   assistant_message?: string
   dialogue?: StudyAgentConceptSetDialogue
+  dialogue_history?: StudyAgentConceptSetDialogueMessage[]
   allowed_actions?: string[]
+}
+
+export interface StudyAgentConceptSetInteractionProfile {
+  bounded_proposal: {
+    available: boolean
+    local_vocabulary_search: boolean
+    application: 'selected_review'
+  }
+  manual_concept_search: {
+    available: boolean
+  }
+}
+
+export const atlasConceptSetInteractionProfile: StudyAgentConceptSetInteractionProfile = {
+  bounded_proposal: {
+    available: true,
+    local_vocabulary_search: true,
+    application: 'selected_review',
+  },
+  manual_concept_search: {
+    available: true,
+  },
 }
 
 export interface StartStudyAgentConceptSetSessionRequest {
@@ -30,10 +66,12 @@ export interface StartStudyAgentConceptSetSessionRequest {
     mode: 'new' | 'extension'
     concept_set_id?: number | string
     source_key?: string
+    interaction_profile: StudyAgentConceptSetInteractionProfile
   }
 }
 
 export interface ContinueStudyAgentConceptSetSessionRequest {
   message: string
   answers?: Record<string, string>
+  ui_context?: Record<string, unknown>
 }
