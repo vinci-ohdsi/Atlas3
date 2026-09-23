@@ -11,7 +11,7 @@
     <template v-if="!hasSession">
       <AtlasAlert
         v-if="priorProvenance?.available && priorProvenance.provenance"
-        severity="info"
+        :severity="priorProvenance.provenance.matches_current_expression === false ? 'warning' : 'info'"
         class="mb-4"
       >
         <strong>Previous /ohdsi context</strong>
@@ -19,7 +19,12 @@
         <p v-if="priorProvenance.provenance.review_revision !== undefined">
           Last recorded review: revision {{ priorProvenance.provenance.review_revision }}.
         </p>
-        <p>Start a new /ohdsi dialogue to refine this saved expression; the prior goal is provided as background, not as an active instruction.</p>
+        <p v-if="priorProvenance.provenance.matches_current_expression === false">
+          The current Selected expression differs from that reviewed revision. Start a new /ohdsi refinement to review and record the changed policy.
+        </p>
+        <p v-else>
+          Start a new /ohdsi dialogue to refine this saved expression; the prior goal is provided as background, not as an active instruction.
+        </p>
       </AtlasAlert>
       <AtlasTextField
         v-model="narrative"

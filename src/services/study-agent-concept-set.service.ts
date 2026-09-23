@@ -54,7 +54,7 @@ export function finalizeStudyAgentConceptSetProposal(
 
 export interface StudyAgentConceptSetProvenance {
   available: boolean
-  provenance?: { goal?: string; review_revision?: number; last_active_at?: string; last_assistant_summary?: string }
+  provenance?: { goal?: string; review_revision?: number; last_active_at?: string; last_assistant_summary?: string; matches_current_expression?: boolean | null }
 }
 
 export function getStudyAgentConceptSetProvenance(conceptSetId: number | string): Promise<StudyAgentConceptSetProvenance> {

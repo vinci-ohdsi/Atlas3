@@ -754,6 +754,7 @@ import { getConceptsByIds, getConceptsBySourceCodes } from '@/services/concept-s
 import { useWebAPIStore } from '@/stores/webapi'
 import { getSourceKey as getDefaultSourceKey } from '@/config/webapi'
 import { useStudyAgentConceptSetStore } from '@/stores/study-agent-concept-set'
+import { getStudyAgentConceptSetProvenance } from '@/services/study-agent-concept-set.service'
 import {
   parsePastedIds,
   parsePastedSourceCodes,
@@ -1202,6 +1203,11 @@ async function onSave() {
       if (savedId !== undefined && savedId !== null) {
         if (studyAgentStore.appliedReviewRevision !== null) {
           await studyAgentStore.finalizeSavedConceptSet(savedId)
+        } else if (isEditMode.value) {
+          const provenance = await getStudyAgentConceptSetProvenance(savedId)
+          if (provenance.provenance?.matches_current_expression === false) {
+            notify.info('Concept set was saved, but it no longer matches the last /ohdsi-reviewed expression.')
+          }
         }
         const tagResult = await store.syncTags(savedId, tagsBeforeSave, tagsToPersist)
         if (!tagResult.success) {
