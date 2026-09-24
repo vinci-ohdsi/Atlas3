@@ -73,6 +73,17 @@
             </AtlasButton>
 
             <AtlasButton
+              variant="secondary"
+              icon="mdi-robot-outline"
+              :aria-label="t('studyAgent.cohort.start', 'Start /ohdsi cohort authoring').value"
+              :disabled="!canCreateCohort"
+              data-testid="study-agent-cohort-btn"
+              @click="showStudyAgentCohortDialog = true"
+            >
+              /ohdsi
+            </AtlasButton>
+
+            <AtlasButton
               icon="mdi-plus"
               :aria-label="t('cohortDefinitions.newDefinitionTitle', 'Create new cohort').value"
               :disabled="!canCreateCohort"
@@ -233,6 +244,8 @@
         </template>
       </AtlasDialog>
 
+      <StudyAgentCohortDialog v-model="showStudyAgentCohortDialog" />
+
       <!-- Delete Confirmation Dialog -->
       <AtlasDialog
         v-model="showDeleteDialog"
@@ -374,6 +387,7 @@ import CohortGrid from '@/components/cohort/CohortGrid.vue'
 import CohortTable from '@/components/cohort/CohortTable.vue'
 import CohortPagination from '@/components/cohort/CohortPagination.vue'
 import CohortFilters from '@/components/cohort/CohortFilters.vue'
+import StudyAgentCohortDialog from '@/components/cohort/StudyAgentCohortDialog.vue'
 import type { CohortDefinitionSummary } from '@/models/webapi.types'
 
 const router = useRouter()
@@ -403,6 +417,7 @@ watch(viewMode, mode => {
 const showImportDialog = ref(false)
 const showDeleteDialog = ref(false)
 const showNewCohortDialog = ref(false)
+const showStudyAgentCohortDialog = ref(false)
 const newCohortName = ref('')
 const selectedCohort = ref<CohortDefinitionSummary | null>(null)
 const deleting = ref(false)

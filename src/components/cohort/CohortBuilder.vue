@@ -42,6 +42,113 @@
       :is-dirty="hasUnsavedChanges"
     />
 
+    <section
+      v-if="studyAgentProvenance?.linked"
+      class="cohort-builder__study-agent-provenance"
+      aria-label="/ohdsi provenance"
+    >
+      <div>
+        <p class="cohort-builder__study-agent-provenance-eyebrow">
+          /ohdsi
+        </p>
+        <h2>Review provenance</h2>
+        <p v-if="studyAgentProvenance.expression_matches_review !== false">
+          This cohort was initialized from a reviewed /ohdsi {{ provenanceSourceLabel }}.
+          Its saved expression still matches that review.
+        </p>
+        <p
+          v-else
+          class="cohort-builder__study-agent-provenance-warning"
+        >
+          Info: Cohort definition was saved, but it no longer matches the last /ohdsi-reviewed expression.
+        </p>
+        <AtlasButton
+          class="cohort-builder__study-agent-provenance-action"
+          size="sm"
+          :loading="studyAgentReviewLoading"
+          @click="reviewStudyAgentCohort"
+        >
+          Review current definition with /ohdsi
+        </AtlasButton>
+        <AtlasAlert
+          v-if="studyAgentReviewError"
+          severity="danger"
+          class="mt-3"
+        >
+          {{ studyAgentReviewError }}
+        </AtlasAlert>
+        <div
+          v-if="studyAgentReview"
+          class="cohort-builder__study-agent-review"
+        >
+          <h3>/ohdsi review</h3>
+          <p v-if="studyAgentReview.plan">
+            {{ studyAgentReview.plan }}
+          </p>
+          <p class="cohort-builder__study-agent-review-disclaimer">
+            Advisory only — this review does not change the cohort definition.
+          </p>
+          <ul v-if="studyAgentReview.findings?.length">
+            <li
+              v-for="(finding, index) in studyAgentReview.findings"
+              :key="finding.id || index"
+            >
+              <strong v-if="finding.severity">{{ finding.severity }}: </strong>{{ finding.message || finding.id }}
+            </li>
+          </ul>
+          <section
+            v-if="studyAgentReview.patches?.length"
+            class="cohort-builder__study-agent-review-patches"
+          >
+            <h4>Suggested changes</h4>
+            <article
+              v-for="(patch, patchIndex) in studyAgentReview.patches"
+              :key="`${patch.artifact || 'patch'}-${patchIndex}`"
+              class="cohort-builder__study-agent-review-patch"
+            >
+              <p v-if="patch.artifact">
+                <strong>{{ patch.artifact }}</strong>
+              </p>
+              <div
+                v-for="(operation, operationIndex) in patch.ops || []"
+                :key="`${operation.path || 'operation'}-${operationIndex}`"
+              >
+                <code v-if="operation.path">{{ operation.path }}</code>
+                <p v-if="operation.value?.summary">
+                  {{ operation.value.summary }}
+                </p>
+                <p v-if="operation.value?.details">
+                  {{ operation.value.details }}
+                </p>
+              </div>
+            </article>
+          </section>
+          <ul v-if="studyAgentReview.risk_notes?.length">
+            <li
+              v-for="(note, index) in studyAgentReview.risk_notes"
+              :key="`risk-${index}`"
+            >
+              {{ note }}
+            </li>
+          </ul>
+        </div>
+        <dl>
+          <div v-if="studyAgentProvenance.phenotype_name">
+            <dt>Starting definition</dt>
+            <dd>{{ studyAgentProvenance.phenotype_name }}</dd>
+          </div>
+          <div v-if="studyAgentProvenance.narrative">
+            <dt>Original narrative</dt>
+            <dd>{{ studyAgentProvenance.narrative }}</dd>
+          </div>
+          <div>
+            <dt>Review revision</dt>
+            <dd>{{ studyAgentProvenance.review_revision }}</dd>
+          </div>
+        </dl>
+      </div>
+    </section>
+
     <!-- Toolbar (status + actions) — hidden when the host view
          renders its own copy in the hero header. State stays here;
          exposed via defineExpose so the parent can wire it up. -->
@@ -333,6 +440,8 @@ import VersionsTabContent from '@/components/versions/VersionsTabContent.vue'
 import type { VersionsConfig, User } from '@/components/versions/types'
 import { format, parseISO } from 'date-fns'
 import * as cohortDefinitionVersionsService from '@/services/cohort-definition-versions.service'
+import { getStudyAgentCohortDraft, getStudyAgentCohortProvenance, linkStudyAgentCohortDraft, reviewStudyAgentCohortDefinition } from '@/services/study-agent-cohort-definition.service'
+import type { StudyAgentCohortCritique, StudyAgentCohortProvenance } from '@/models/study-agent.types'
 import CohortBreadcrumb from './CohortBreadcrumb.vue'
 import CohortToolbarActions from './CohortToolbarActions.vue'
 import CohortToolbarStatus from './CohortToolbarStatus.vue'
@@ -390,6 +499,29 @@ const cohortStore = useCohortStore()
 const conceptSetsStore = useConceptSetsStore()
 const webapiStore = useWebAPIStore()
 const { t, tv } = useI18n()
+const studyAgentProvenance = ref<StudyAgentCohortProvenance | null>(null)
+const studyAgentReview = ref<StudyAgentCohortCritique | null>(null)
+const studyAgentReviewLoading = ref(false)
+const studyAgentReviewError = ref('')
+const provenanceSourceLabel = computed(() => {
+  const source = studyAgentProvenance.value?.source_type
+  return source === 'make_computable' ? 'new computable definition' : source === 'phenotype_library' ? 'phenotype-library definition' : 'AI-supported recommendation'
+})
+
+async function reviewStudyAgentCohort() {
+  if (!cohortId.value || studyAgentReviewLoading.value) return
+  studyAgentReviewLoading.value = true
+  studyAgentReviewError.value = ''
+  try {
+    const response = await reviewStudyAgentCohortDefinition(cohortId.value)
+    studyAgentReview.value = response.review
+  } catch (error) {
+    logger.warn('CohortBuilder', 'Unable to review cohort definition with /ohdsi', error)
+    studyAgentReviewError.value = 'Unable to review the current cohort definition with /ohdsi.'
+  } finally {
+    studyAgentReviewLoading.value = false
+  }
+}
 
 // ── Core expression state (Phase 4) ──────────────────────────────────────────
 // Single reactive CohortExpression replaces 10+ individual refs.
@@ -785,6 +917,9 @@ watch(
     cohortDescription.value = ''
     loadedTags.value = []
     loadedSnapshot.value = null
+    studyAgentProvenance.value = null
+    studyAgentReview.value = null
+    studyAgentReviewError.value = ''
   }
 )
 
@@ -807,6 +942,18 @@ onMounted(async () => {
     // the historical definition, and fetching the current one would clobber it.
     syncToStoreDefinition()
   } else {
+    const studyAgentSession = typeof route.query.studyAgentSession === 'string' ? route.query.studyAgentSession : ''
+    if (studyAgentSession) {
+      try {
+        const draft = await getStudyAgentCohortDraft(studyAgentSession)
+        cohortStore.setCohort({ name: draft.name || 'New cohort', description: '', expression: draft.expression })
+        cohortName.value = draft.name || 'New cohort'
+        markExpressionRevision()
+      } catch (error) {
+        logger.warn('CohortBuilder', 'Unable to load /ohdsi cohort draft', error)
+        cohortStore.createNewCohort()
+      }
+    } else {
     const restored = cohortStore.restoreFromDraft()
     if (!restored) {
       // If pythia (or any other code path) has already populated
@@ -841,6 +988,7 @@ onMounted(async () => {
       cohortName.value = route.query.name
     }
     markExpressionRevision()
+    }
   }
 
   // Load resources in parallel in the background (don't block rendering)
@@ -951,6 +1099,9 @@ function failLoad(message: string) {
   cohortDescription.value = ''
   loadedTags.value = []
   loadedSnapshot.value = null
+  studyAgentProvenance.value = null
+  studyAgentReview.value = null
+  studyAgentReviewError.value = ''
   cohortStore.clearCohort()
   isLoadingCohort.value = false
 }
@@ -971,7 +1122,10 @@ async function loadCohort(id: string) {
   loadError.value = null
   try {
     const numericId = parseInt(id, 10)
-    const atlasCohortResult = await getCohortDefinition(numericId)
+    const [atlasCohortResult, provenance] = await Promise.all([
+      getCohortDefinition(numericId),
+      getStudyAgentCohortProvenance(numericId).catch(() => null),
+    ])
     if (loadToken !== latestLoadToken) return
 
     if (!atlasCohortResult.success) {
@@ -985,6 +1139,9 @@ async function loadCohort(id: string) {
     }
 
     const atlasCohort = atlasCohortResult.data
+    studyAgentProvenance.value = provenance?.linked ? provenance : null
+    studyAgentReview.value = null
+    studyAgentReviewError.value = ''
     if (atlasCohort.expressionType && atlasCohort.expressionType !== 'SIMPLE_EXPRESSION') {
       logger.error('CohortBuilder', `Unsupported expression type: ${atlasCohort.expressionType}`)
       failLoad(tv('components.cohortBuilder.loadError', 'Failed to load cohort'))
@@ -1363,6 +1520,15 @@ async function handleSave(): Promise<{ id?: number; name?: string }> {
     cohortStore.clearDraft()
     loadedSnapshot.value = createStateSnapshot()
     markExpressionRevision()
+
+    const studyAgentSession = typeof route.query.studyAgentSession === 'string' ? route.query.studyAgentSession : ''
+    if (studyAgentSession) {
+      try {
+        await linkStudyAgentCohortDraft(studyAgentSession, savedId)
+      } catch (linkError) {
+        logger.warn('CohortBuilder', 'Cohort saved, but /ohdsi provenance was not linked', linkError)
+      }
+    }
 
     successMessage.value = tv('components.cohortBuilder.saveSuccess', 'Cohort saved successfully')
     showSuccess.value = true
@@ -2114,6 +2280,105 @@ defineExpose({
 
 .cohort-builder__load-error {
   margin: 8px 0 16px;
+}
+
+.cohort-builder__study-agent-provenance {
+  margin: 8px 0 16px;
+  padding: 16px 20px;
+  border-left: 4px solid rgb(var(--v-theme-primary));
+  background: rgb(var(--v-theme-surface-variant));
+}
+
+.cohort-builder__study-agent-provenance h2 {
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+
+.cohort-builder__study-agent-provenance p {
+  margin: 0;
+}
+
+.cohort-builder__study-agent-provenance-action {
+  margin-top: 12px;
+}
+
+.cohort-builder__study-agent-review {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgb(var(--v-theme-outline-variant));
+}
+
+.cohort-builder__study-agent-review h3 {
+  margin: 0 0 4px;
+  font-size: 15px;
+}
+
+.cohort-builder__study-agent-review ul {
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+
+.cohort-builder__study-agent-review-patches {
+  margin-top: 12px;
+}
+
+.cohort-builder__study-agent-review-patches h4 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+
+.cohort-builder__study-agent-review-patch {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgb(var(--v-theme-outline-variant));
+  border-radius: 6px;
+  background: rgb(var(--v-theme-surface));
+}
+
+.cohort-builder__study-agent-review-patch p {
+  margin: 4px 0 0;
+}
+
+.cohort-builder__study-agent-review-patch code {
+  display: inline-block;
+  margin-top: 4px;
+  color: rgb(var(--v-theme-primary));
+  font-size: 12px;
+}
+
+.cohort-builder__study-agent-review-disclaimer {
+  color: rgb(var(--v-theme-on-surface-variant));
+  font-size: 13px;
+}
+
+.cohort-builder__study-agent-provenance-warning {
+  color: rgb(var(--v-theme-warning));
+  font-weight: 600;
+}
+
+.cohort-builder__study-agent-provenance-eyebrow {
+  margin-bottom: 4px !important;
+  color: rgb(var(--v-theme-primary));
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.cohort-builder__study-agent-provenance dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px 24px;
+  margin: 14px 0 0;
+}
+
+.cohort-builder__study-agent-provenance dt {
+  color: rgb(var(--v-theme-on-surface-variant));
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.cohort-builder__study-agent-provenance dd {
+  margin: 2px 0 0;
 }
 
 .cohort-builder__preview-banner {
