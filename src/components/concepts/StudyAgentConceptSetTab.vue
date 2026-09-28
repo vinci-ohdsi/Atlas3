@@ -3,7 +3,7 @@
     <div class="study-agent-concept-set-tab__intro">
       <h2>/ohdsi assistant</h2>
       <p>
-        Describe the concept-set goal with <code>/ohdsi</code>. Suggestions are advisory;
+        Describe the concept-set goal. Suggestions are advisory;
         they do not change the selected expression.
       </p>
     </div>
@@ -29,7 +29,7 @@
       <AtlasTextField
         v-model="narrative"
         label="Concept-set goal"
-        placeholder="/ohdsi help me find standard RxNorm concepts for bolus insulin"
+        placeholder="For example: help me find standard RxNorm concepts for bolus insulin"
         :disabled="assistant.loading"
         multiline
         :rows="4"
@@ -89,10 +89,11 @@
         :key="question.id"
         class="study-agent-concept-set-tab__question"
       >
-        <AtlasSelect
+        <AtlasCombobox
           v-model="answers[question.id]"
           :label="question.prompt"
           :items="question.options"
+          hint="Choose a suggested answer or type your own."
           :disabled="assistant.loading"
           clearable
           variant="outlined"
@@ -150,11 +151,13 @@
       v-if="proposalActionAvailable || (!proposalAppliedForReview && assistant.proposal)"
       class="study-agent-concept-set-tab__follow-up"
     >
-      <AtlasSelect
+      <AtlasCombobox
         v-if="proposalActionAvailable"
         v-model="proposalDomain"
         label="Proposal domain"
         :items="proposalDomains"
+        placeholder="Choose or enter an OMOP domain"
+        clearable
         variant="outlined"
         hide-details
       />
@@ -288,7 +291,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { AtlasAlert, AtlasButton, AtlasSelect, AtlasTextField } from '@/components/ui'
+import { AtlasAlert, AtlasButton, AtlasCombobox, AtlasTextField } from '@/components/ui'
 import { useStudyAgentConceptSetStore } from '@/stores/study-agent-concept-set'
 import { atlasConceptSetInteractionProfile } from '@/models/study-agent.types'
 import { getStudyAgentConceptSetProvenance, type StudyAgentConceptSetProvenance } from '@/services/study-agent-concept-set.service'
@@ -313,7 +316,7 @@ const showDialogueComposer = ref(false)
 const composerPanel = ref<HTMLElement | null>(null)
 const priorProvenance = ref<StudyAgentConceptSetProvenance | null>(null)
 const proposalDomains = ['Drug', 'Condition', 'Measurement', 'Procedure', 'Observation']
-const canSubmit = computed(() => narrative.value.trim().toLowerCase().startsWith('/ohdsi '))
+const canSubmit = computed(() => !!narrative.value.trim())
 const hasSession = computed(() => !!assistant.session?.session_id)
 watch(
   () => [props.active, props.mode, props.conceptSetId] as const,
@@ -416,7 +419,7 @@ async function submit() {
   try {
     await assistant.start({
       command: '/ohdsi',
-      message: narrative.value.trim().slice('/ohdsi'.length).trim(),
+      message: narrative.value.trim(),
       ui_context: {
         route: 'concepts',
         tab: 'concept-set-editor',

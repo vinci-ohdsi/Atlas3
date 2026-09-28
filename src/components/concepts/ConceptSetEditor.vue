@@ -346,6 +346,7 @@
 
                 <v-window-item value="assistant">
                   <StudyAgentConceptSetTab
+                    :key="`study-agent-${props.conceptSet?.id ?? 'new'}-${studyAgentDrawerInstance}`"
                     :active="activeTab === 'assistant'"
                     :mode="isEditMode ? 'extension' : 'new'"
                     :concept-set-id="props.conceptSet?.id"
@@ -766,20 +767,66 @@ const { t, tv } = useI18n()
 const webapiStore = useWebAPIStore()
 const studyAgentStore = useStudyAgentConceptSetStore()
 
-const studyAgentExpressionSummary = computed(() => ({
-  selected_item_count: store.currentSet?.items?.length ?? 0,
-  selected_items: (store.currentSet?.items ?? []).slice(0, 100).map(item => ({
-    concept_id: item.conceptId,
-    concept_name: item.conceptName,
-    concept_code: item.conceptCode,
-    vocabulary_id: item.vocabularyId,
-    domain_id: item.domainId,
-    concept_class_id: item.conceptClassId,
-    is_excluded: item.isExcluded,
-    include_descendants: item.includeDescendants,
-    include_mapped: item.includeMapped,
-  })),
-}))
+function summarizeConceptValues(concepts: Concept[], field: 'domainId' | 'vocabularyId' | 'conceptClassId') {
+  const counts = new Map<string, number>()
+  for (const concept of concepts) {
+    const value = String(concept[field] ?? '').trim() || 'Unknown'
+    counts.set(value, (counts.get(value) ?? 0) + 1)
+  }
+  return [...counts.entries()]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, 12)
+    .map(([value, count]) => ({ value, count }))
+}
+
+const studyAgentExpressionSummary = computed(() => {
+  const selectedItems = store.currentSet?.items ?? []
+  const includedItems = store.includedItems
+  const selectedPolicy = {
+    include: selectedItems.filter(item => !item.isExcluded).length,
+    exclude: selectedItems.filter(item => item.isExcluded).length,
+    descendants: selectedItems.filter(item => item.includeDescendants).length,
+    mapped: selectedItems.filter(item => item.includeMapped).length,
+  }
+  const resolutionState = store.includedLoading
+    ? 'resolving'
+    : store.includedError
+      ? 'unavailable'
+      : includedItems.length || !selectedItems.length
+        ? 'resolved'
+        : 'not_loaded'
+
+  return {
+    selected_item_count: selectedItems.length,
+    selected_policy: selectedPolicy,
+    selected_items: selectedItems.slice(0, 100).map(item => ({
+      concept_id: item.conceptId,
+      concept_name: item.conceptName,
+      concept_code: item.conceptCode,
+      vocabulary_id: item.vocabularyId,
+      domain_id: item.domainId,
+      concept_class_id: item.conceptClassId,
+      is_excluded: item.isExcluded,
+      include_descendants: item.includeDescendants,
+      include_mapped: item.includeMapped,
+    })),
+    resolved_included: {
+      state: resolutionState,
+      count: includedItems.length,
+      fetched_at: store.includedFetchedAt,
+      domains: summarizeConceptValues(includedItems, 'domainId'),
+      vocabularies: summarizeConceptValues(includedItems, 'vocabularyId'),
+      concept_classes: summarizeConceptValues(includedItems, 'conceptClassId'),
+      sample: includedItems.slice(0, 20).map(concept => ({
+        concept_id: concept.conceptId,
+        concept_name: concept.conceptName,
+        vocabulary_id: concept.vocabularyId,
+        domain_id: concept.domainId,
+        concept_class_id: concept.conceptClassId,
+      })),
+    },
+  }
+})
 
 // ============================================================================
 // Props & Emits
@@ -828,6 +875,7 @@ const formValid = ref(false)
 const loading = ref(false)
 const hasUnsavedChanges = ref(false)
 const activeTab = ref<string>('selected') // Tab state for concept building - default to selected
+const studyAgentDrawerInstance = ref(0)
 
 // Inline concept detail view state. When set, the editor body swaps from the
 // tabs to a ConceptDetailContent panel with a back button. Cleared on back
@@ -856,10 +904,16 @@ watch(
   () => props.modelValue,
   (open) => {
     if (!open) {
+      studyAgentStore.resetDrawerState()
+      studyAgentDrawerInstance.value += 1
       viewingConcept.value = null
       store.resetIncluded()
       document.body.style.overflow = ''
     } else {
+      // Preserve an optional narrative queued by concept search while ensuring
+      // a previous drawer's dialogue cannot bleed into this concept set.
+      studyAgentStore.resetDrawerState({ preservePendingNarrative: true })
+      studyAgentDrawerInstance.value += 1
       // New concept sets open on the Search tab so the user can start adding
       // concepts immediately; existing sets open on the Selected (expression)
       // tab as before. See OHDSI/Atlas3 discussion #97. Read props directly

@@ -121,6 +121,13 @@ export interface StudyAgentCohortCritiqueFinding {
   message?: string
 }
 
+export interface StudyAgentCohortRefinementDialogue {
+  answer?: string
+  current_step_guidance?: string | string[]
+  cautions?: string[]
+  suggested_next_actions?: string[]
+}
+
 export interface StudyAgentCohortCritiquePatchNote {
   path?: string
   value?: {

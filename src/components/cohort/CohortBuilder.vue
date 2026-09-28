@@ -96,6 +96,49 @@
               <strong v-if="finding.severity">{{ finding.severity }}: </strong>{{ finding.message || finding.id }}
             </li>
           </ul>
+          <section class="cohort-builder__study-agent-refinement-dialogue">
+            <p class="cohort-builder__study-agent-refinement-label">
+              Ask /ohdsi about applying this review
+            </p>
+            <textarea
+              v-model="studyAgentRefinementMessage"
+              aria-label="Ask /ohdsi about applying this review"
+              rows="3"
+              placeholder="For example: How should I make this cohort incident using the Atlas editor?"
+            />
+            <AtlasButton
+              size="sm"
+              :loading="studyAgentRefinementLoading"
+              :disabled="!studyAgentRefinementMessage.trim()"
+              @click="continueStudyAgentRefinementDialogue"
+            >
+              Ask /ohdsi
+            </AtlasButton>
+            <AtlasAlert
+              v-if="studyAgentRefinementError"
+              severity="danger"
+              class="mt-3"
+            >
+              {{ studyAgentRefinementError }}
+            </AtlasAlert>
+            <div
+              v-if="studyAgentRefinementDialogue"
+              class="cohort-builder__study-agent-refinement-response"
+            >
+              <h4>/ohdsi guidance</h4>
+              <p v-if="studyAgentRefinementDialogue.answer">
+                {{ studyAgentRefinementDialogue.answer }}
+              </p>
+              <ul v-if="refinementNextActions.length">
+                <li
+                  v-for="(action, index) in refinementNextActions"
+                  :key="index"
+                >
+                  {{ action }}
+                </li>
+              </ul>
+            </div>
+          </section>
           <section
             v-if="studyAgentReview.patches?.length"
             class="cohort-builder__study-agent-review-patches"
@@ -106,14 +149,10 @@
               :key="`${patch.artifact || 'patch'}-${patchIndex}`"
               class="cohort-builder__study-agent-review-patch"
             >
-              <p v-if="patch.artifact">
-                <strong>{{ patch.artifact }}</strong>
-              </p>
               <div
                 v-for="(operation, operationIndex) in patch.ops || []"
                 :key="`${operation.path || 'operation'}-${operationIndex}`"
               >
-                <code v-if="operation.path">{{ operation.path }}</code>
                 <p v-if="operation.value?.summary">
                   {{ operation.value.summary }}
                 </p>
@@ -440,8 +479,8 @@ import VersionsTabContent from '@/components/versions/VersionsTabContent.vue'
 import type { VersionsConfig, User } from '@/components/versions/types'
 import { format, parseISO } from 'date-fns'
 import * as cohortDefinitionVersionsService from '@/services/cohort-definition-versions.service'
-import { getStudyAgentCohortDraft, getStudyAgentCohortProvenance, linkStudyAgentCohortDraft, reviewStudyAgentCohortDefinition } from '@/services/study-agent-cohort-definition.service'
-import type { StudyAgentCohortCritique, StudyAgentCohortProvenance } from '@/models/study-agent.types'
+import { continueStudyAgentCohortRefinementDialogue, getStudyAgentCohortDraft, getStudyAgentCohortProvenance, linkStudyAgentCohortDraft, reviewStudyAgentCohortDefinition } from '@/services/study-agent-cohort-definition.service'
+import type { StudyAgentCohortCritique, StudyAgentCohortProvenance, StudyAgentCohortRefinementDialogue } from '@/models/study-agent.types'
 import CohortBreadcrumb from './CohortBreadcrumb.vue'
 import CohortToolbarActions from './CohortToolbarActions.vue'
 import CohortToolbarStatus from './CohortToolbarStatus.vue'
@@ -503,10 +542,36 @@ const studyAgentProvenance = ref<StudyAgentCohortProvenance | null>(null)
 const studyAgentReview = ref<StudyAgentCohortCritique | null>(null)
 const studyAgentReviewLoading = ref(false)
 const studyAgentReviewError = ref('')
+const studyAgentRefinementMessage = ref('')
+const studyAgentRefinementDialogue = ref<StudyAgentCohortRefinementDialogue | null>(null)
+const studyAgentRefinementLoading = ref(false)
+const studyAgentRefinementError = ref('')
+const refinementNextActions = computed(() => {
+  const dialogue = studyAgentRefinementDialogue.value
+  if (!dialogue) return []
+  if (Array.isArray(dialogue.suggested_next_actions)) return dialogue.suggested_next_actions
+  return dialogue.current_step_guidance ? (Array.isArray(dialogue.current_step_guidance) ? dialogue.current_step_guidance : [dialogue.current_step_guidance]) : []
+})
 const provenanceSourceLabel = computed(() => {
   const source = studyAgentProvenance.value?.source_type
   return source === 'make_computable' ? 'new computable definition' : source === 'phenotype_library' ? 'phenotype-library definition' : 'AI-supported recommendation'
 })
+
+async function continueStudyAgentRefinementDialogue() {
+  if (!cohortId.value || !studyAgentRefinementMessage.value.trim() || studyAgentRefinementLoading.value) return
+  studyAgentRefinementLoading.value = true
+  studyAgentRefinementError.value = ''
+  try {
+    const response = await continueStudyAgentCohortRefinementDialogue(cohortId.value, studyAgentRefinementMessage.value.trim())
+    studyAgentRefinementDialogue.value = response.dialogue
+    studyAgentRefinementMessage.value = ''
+  } catch (error) {
+    logger.warn('CohortBuilder', 'Unable to continue /ohdsi cohort refinement dialogue', error)
+    studyAgentRefinementError.value = 'Unable to continue the /ohdsi refinement dialogue.'
+  } finally {
+    studyAgentRefinementLoading.value = false
+  }
+}
 
 async function reviewStudyAgentCohort() {
   if (!cohortId.value || studyAgentReviewLoading.value) return
@@ -920,6 +985,9 @@ watch(
     studyAgentProvenance.value = null
     studyAgentReview.value = null
     studyAgentReviewError.value = ''
+    studyAgentRefinementDialogue.value = null
+    studyAgentRefinementMessage.value = ''
+    studyAgentRefinementError.value = ''
   }
 )
 
@@ -1142,6 +1210,9 @@ async function loadCohort(id: string) {
     studyAgentProvenance.value = provenance?.linked ? provenance : null
     studyAgentReview.value = null
     studyAgentReviewError.value = ''
+    studyAgentRefinementDialogue.value = null
+    studyAgentRefinementMessage.value = ''
+    studyAgentRefinementError.value = ''
     if (atlasCohort.expressionType && atlasCohort.expressionType !== 'SIMPLE_EXPRESSION') {
       logger.error('CohortBuilder', `Unsupported expression type: ${atlasCohort.expressionType}`)
       failLoad(tv('components.cohortBuilder.loadError', 'Failed to load cohort'))
@@ -2318,6 +2389,43 @@ defineExpose({
   padding-left: 20px;
 }
 
+.cohort-builder__study-agent-refinement-dialogue {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgb(var(--v-theme-outline-variant));
+}
+
+.cohort-builder__study-agent-refinement-label {
+  margin: 0;
+  font-weight: 600;
+}
+
+.cohort-builder__study-agent-refinement-dialogue textarea {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid rgb(var(--v-theme-outline));
+  border-radius: 4px;
+  resize: vertical;
+}
+
+.cohort-builder__study-agent-refinement-response {
+  padding: 10px 12px;
+  border-left: 3px solid rgb(var(--v-theme-primary));
+  background: rgb(var(--v-theme-surface));
+}
+
+.cohort-builder__study-agent-refinement-response h4,
+.cohort-builder__study-agent-refinement-response p {
+  margin: 0 0 6px;
+}
+
+.cohort-builder__study-agent-refinement-response ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
 .cohort-builder__study-agent-review-patches {
   margin-top: 12px;
 }
@@ -2339,12 +2447,6 @@ defineExpose({
   margin: 4px 0 0;
 }
 
-.cohort-builder__study-agent-review-patch code {
-  display: inline-block;
-  margin-top: 4px;
-  color: rgb(var(--v-theme-primary));
-  font-size: 12px;
-}
 
 .cohort-builder__study-agent-review-disclaimer {
   color: rgb(var(--v-theme-on-surface-variant));

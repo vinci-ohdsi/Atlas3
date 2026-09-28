@@ -1,5 +1,5 @@
 import { httpGet, httpPost } from '@/services/http-client'
-import type { StudyAgentCohortCritique, StudyAgentCohortDraft, StudyAgentCohortProvenance, StudyAgentCohortRoute, StudyAgentCohortSession } from '@/models/study-agent.types'
+import type { StudyAgentCohortCritique, StudyAgentCohortDraft, StudyAgentCohortRefinementDialogue, StudyAgentCohortProvenance, StudyAgentCohortRoute, StudyAgentCohortSession } from '@/models/study-agent.types'
 
 const BASE = '/study-agent/v1/cohort-definition-sessions'
 
@@ -37,4 +37,8 @@ export function getStudyAgentCohortProvenance(cohortDefinitionId: number): Promi
 
 export function reviewStudyAgentCohortDefinition(cohortDefinitionId: number): Promise<{ review: StudyAgentCohortCritique }> {
   return httpPost<{ review: StudyAgentCohortCritique }>(`/study-agent/v1/cohort-definitions/${cohortDefinitionId}/review`, {})
+}
+
+export function continueStudyAgentCohortRefinementDialogue(cohortDefinitionId: number, message: string): Promise<{ dialogue: StudyAgentCohortRefinementDialogue }> {
+  return httpPost<{ dialogue: StudyAgentCohortRefinementDialogue }>(`/study-agent/v1/cohort-definitions/${cohortDefinitionId}/review-dialogue`, { message })
 }

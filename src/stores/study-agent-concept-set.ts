@@ -40,6 +40,16 @@ export const useStudyAgentConceptSetStore = defineStore('study-agent-concept-set
     return narrative
   }
 
+  /** Clear transient session state when an editor drawer is closed or replaced. */
+  function resetDrawerState(options: { preservePendingNarrative?: boolean } = {}) {
+    if (!options.preservePendingNarrative) pendingNarrative.value = null
+    session.value = null
+    proposal.value = null
+    appliedReviewRevision.value = null
+    error.value = null
+    loading.value = false
+  }
+
   async function start(request: StartStudyAgentConceptSetSessionRequest) {
     loading.value = true
     error.value = null
@@ -126,5 +136,5 @@ export const useStudyAgentConceptSetStore = defineStore('study-agent-concept-set
     } finally { loading.value = false }
   }
 
-  return { pendingNarrative, session, loading, error, proposal, appliedReviewRevision, queueNarrative, consumePendingNarrative, start, reply, requestProposal, applyProposal, finalizeSavedConceptSet }
+  return { pendingNarrative, session, loading, error, proposal, appliedReviewRevision, queueNarrative, consumePendingNarrative, resetDrawerState, start, reply, requestProposal, applyProposal, finalizeSavedConceptSet }
 })

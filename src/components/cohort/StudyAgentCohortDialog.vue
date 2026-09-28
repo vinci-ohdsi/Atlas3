@@ -258,6 +258,14 @@
           >
             Open unsaved draft
           </AtlasButton>
+          <AtlasButton
+            v-else-if="candidate.computability_status === 'conversion_required'"
+            size="sm"
+            :loading="convertingId === candidate.phenotype_id"
+            @click="startConversion(candidate)"
+          >
+            Use as reference for a new definition
+          </AtlasButton>
         </div>
       </article>
       <AtlasButton
@@ -324,6 +332,14 @@
               @click="importDraft(candidate)"
             >
               Open unsaved draft
+            </AtlasButton>
+            <AtlasButton
+              v-else-if="candidate.computability_status === 'conversion_required'"
+              size="sm"
+              :loading="convertingId === candidate.phenotype_id"
+              @click="startConversion(candidate)"
+            >
+              Use as reference for a new definition
             </AtlasButton>
           </div>
         </article>
@@ -393,6 +409,14 @@
             >
               Open unsaved draft
             </AtlasButton>
+            <AtlasButton
+              v-else-if="candidate.computability_status === 'conversion_required'"
+              size="sm"
+              :loading="convertingId === candidate.phenotype_id"
+              @click="startConversion(candidate)"
+            >
+              Use as reference for a new definition
+            </AtlasButton>
           </div>
         </article>
       </section>
@@ -441,6 +465,7 @@ const narrative = ref('')
 const route = ref<StudyAgentCohortRoute>('ai_search')
 const loading = ref(false)
 const importingId = ref<string | null>(null)
+const convertingId = ref<string | null>(null)
 const error = ref('')
 const candidates = ref<StudyAgentPhenotypeCandidate[]>([])
 const rankedCandidates = ref<StudyAgentPhenotypeCandidate[]>([])
@@ -672,6 +697,30 @@ async function createComputableDraft() {
     await router.push({ path: '/cohorts/new', query: { studyAgentSession: sessionId } })
   } catch (err) { error.value = err instanceof Error ? err.message : 'Unable to create the reviewed cohort draft.' } finally { loading.value = false }
 }
+async function startConversion(candidate: StudyAgentPhenotypeCandidate) {
+  if (convertingId.value) return
+  convertingId.value = candidate.phenotype_id
+  error.value = ''
+  try {
+    const reference = [
+      `Reference phenotype for review: ${candidate.phenotype_name}.`,
+      candidate.short_description ? `Summary: ${candidate.short_description}` : '',
+      'Use this as evidence only. Build a new computable cohort definition through scope clarification and explicit concept-policy review.',
+    ].filter(Boolean).join(' ')
+    narrative.value = `${narrative.value.trim()}
+
+${reference}`.trim()
+    route.value = 'make_computable'
+    candidates.value = []; rankedCandidates.value = []; retrievalCandidates.value = []
+    showRankedCandidates.value = false; showRetrievalCandidates.value = false
+    await run()
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : 'Unable to start the computable-definition review.'
+  } finally {
+    convertingId.value = null
+  }
+}
+
 async function importDraft(candidate: StudyAgentPhenotypeCandidate) {
   if (!sessionId) return
   importingId.value = candidate.phenotype_id; error.value = ''
@@ -681,7 +730,7 @@ async function importDraft(candidate: StudyAgentPhenotypeCandidate) {
     await router.push({ path: '/cohorts/new', query: { studyAgentSession: sessionId } })
   } catch (err) { error.value = err instanceof Error ? err.message : 'Unable to open the phenotype draft.' } finally { importingId.value = null }
 }
-function reset() { open.value = false; narrative.value = ''; route.value = 'ai_search'; candidates.value = []; rankedCandidates.value = []; retrievalCandidates.value = []; showRankedCandidates.value = false; showRetrievalCandidates.value = false; candidateOffset.value = 0; lastSearchedNarrative.value = ''; conceptCandidates.value = []; scopeQuestions.value = []; showPolicyConfirmation.value = false; scope.value = { indexEvent: '', domain: '', entryLimit: '', priorObservation: null, indexDayBoundary: '', exitStrategy: '', windowsNone: false, confirmed: false }; error.value = ''; sessionId = '' }
+function reset() { open.value = false; narrative.value = ''; route.value = 'ai_search'; convertingId.value = null; candidates.value = []; rankedCandidates.value = []; retrievalCandidates.value = []; showRankedCandidates.value = false; showRetrievalCandidates.value = false; candidateOffset.value = 0; lastSearchedNarrative.value = ''; conceptCandidates.value = []; scopeQuestions.value = []; showPolicyConfirmation.value = false; scope.value = { indexEvent: '', domain: '', entryLimit: '', priorObservation: null, indexDayBoundary: '', exitStrategy: '', windowsNone: false, confirmed: false }; error.value = ''; sessionId = '' }
 </script>
 
 <style scoped>
