@@ -113,6 +113,67 @@ export interface StudyAgentCohortDraft {
   expression_checksum: string
 }
 
+/**
+ * Reviewable authoring plan, intentionally distinct from Circe. A concept-set
+ * asset is reusable; its cohort-only role appears in the binding.
+ */
+export interface StudyAgentCohortSpecification {
+  schema_version: string
+  narrative: string
+  state: 'needs_concept_review' | 'draft_ready' | string
+  concept_set_slots: Array<{
+    slot_id: string
+    label: string
+    asset_status: 'needs_candidate_retrieval' | 'needs_concept_review' | 'reviewed' | string
+    asset?: {
+      source?: string
+      name?: string
+      domain?: string
+      concept_set_id?: number
+      policy_item_count?: number
+      expression_checksum?: string
+    }
+  }>
+  criterion_bindings: Array<{
+    binding_id: string
+    concept_set_slot_id: string
+    criterion_role: 'primary_index' | 'supporting' | 'exclusion' | 'visit_restriction' | string
+    domain?: string
+    relationship?: 'required_with_index' | 'exclude_at_index' | 'overlaps_index' | string
+    supporting_condition_window?: { start_days?: number; end_days?: number; anchor?: string }
+  }>
+  cohort_logic?: Record<string, unknown>
+  projection?: { supported?: boolean; mode?: string; summary?: string; reason?: string; status?: string }
+  unresolved_decisions?: string[]
+  unsupported_constructs?: string[]
+}
+
+export interface StudyAgentCohortPlanSummary {
+  session_id: string
+  narrative: string
+  revision: number
+  state: 'needs_component_review' | 'needs_logic_review' | 'ready_for_projection' | string
+  concept_set_slot_count: number
+  reviewed_slot_count: number
+  updated_at?: string
+}
+
+export interface StudyAgentCohortSpecificationRevision {
+  revision: number
+  state: string
+  specification: StudyAgentCohortSpecification
+  specification_checksum: string
+  created_at?: string
+  accepted_at?: string | null
+}
+
+export interface StudyAgentCohortSpecificationComponent {
+  label: string
+  domain: string
+  criterion_role: 'supporting' | 'exclusion' | 'visit_restriction'
+  relationship: 'required_with_index' | 'exclude_at_index' | 'overlaps_index'
+}
+
 /** Read-only link between a saved cohort and its original /ohdsi review. */
 export interface StudyAgentCohortCritiqueFinding {
   id?: string

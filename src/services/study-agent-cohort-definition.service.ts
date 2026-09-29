@@ -1,5 +1,5 @@
 import { httpGet, httpPost } from '@/services/http-client'
-import type { StudyAgentCohortCritique, StudyAgentCohortDraft, StudyAgentCohortRefinementDialogue, StudyAgentCohortProvenance, StudyAgentCohortRoute, StudyAgentCohortSession } from '@/models/study-agent.types'
+import type { StudyAgentCohortCritique, StudyAgentCohortDraft, StudyAgentCohortRefinementDialogue, StudyAgentCohortProvenance, StudyAgentCohortRoute, StudyAgentCohortSession, StudyAgentCohortSpecificationComponent, StudyAgentCohortSpecificationRevision, StudyAgentCohortPlanSummary } from '@/models/study-agent.types'
 
 const BASE = '/study-agent/v1/cohort-definition-sessions'
 
@@ -15,8 +15,40 @@ export function searchStudyAgentPhenotypeLibrary(sessionId: string, query: strin
   return httpPost<{ catalog: Record<string, unknown> }>(`${BASE}/${encodeURIComponent(sessionId)}/library-search`, { query })
 }
 
-export function continueStudyAgentMakeComputable(sessionId: string, request: Record<string, unknown>): Promise<{ flow: Record<string, unknown> }> {
-  return httpPost<{ flow: Record<string, unknown> }>(`${BASE}/${encodeURIComponent(sessionId)}/make-computable`, request)
+export function continueStudyAgentMakeComputable(sessionId: string, request: Record<string, unknown>): Promise<{ flow: Record<string, unknown>; cohort_specification?: StudyAgentCohortSpecificationRevision }> {
+  return httpPost<{ flow: Record<string, unknown>; cohort_specification?: StudyAgentCohortSpecificationRevision }>(`${BASE}/${encodeURIComponent(sessionId)}/make-computable`, request)
+}
+
+export function getStudyAgentCohortSpecification(sessionId: string): Promise<{ cohort_specification: StudyAgentCohortSpecificationRevision }> {
+  return httpGet<{ cohort_specification: StudyAgentCohortSpecificationRevision }>(`${BASE}/${encodeURIComponent(sessionId)}/specification`)
+}
+
+export function archiveStudyAgentCohortPlan(sessionId: string): Promise<{ session_id: string; state: 'archived' }> {
+  return httpPost<{ session_id: string; state: 'archived' }>(`${BASE}/${encodeURIComponent(sessionId)}/archive`, {})
+}
+
+export function listStudyAgentCohortPlans(): Promise<{ plans: StudyAgentCohortPlanSummary[] }> {
+  return httpGet<{ plans: StudyAgentCohortPlanSummary[] }>(`${BASE}/specifications`)
+}
+
+export function createStudyAgentMultiComponentSpecification(sessionId: string, scope: Record<string, unknown>, components: StudyAgentCohortSpecificationComponent[]): Promise<{ cohort_specification: StudyAgentCohortSpecificationRevision }> {
+  return httpPost<{ cohort_specification: StudyAgentCohortSpecificationRevision }>(`${BASE}/${encodeURIComponent(sessionId)}/specification`, { scope, components })
+}
+
+export function attachStudyAgentCohortConceptSetSnapshot(sessionId: string, slotId: string, conceptSetId: number | string): Promise<{ cohort_specification: StudyAgentCohortSpecificationRevision }> {
+  return httpPost<{ cohort_specification: StudyAgentCohortSpecificationRevision }>(`${BASE}/${encodeURIComponent(sessionId)}/specification/slots/${encodeURIComponent(slotId)}/concept-set/${encodeURIComponent(conceptSetId)}`, {})
+}
+
+export function confirmStudyAgentCohortSpecificationLogic(sessionId: string, review: { relationships: Record<string, string>; supporting_windows?: Record<string, { start_days: number | null; end_days: number | null }>; exit_strategy?: string | { type: 'fixed'; index: string; offset_days: number | null }; supporting_operator: 'ALL' | 'ANY'; confirm_bindings: boolean; confirm_logic: boolean }): Promise<{ cohort_specification: StudyAgentCohortSpecificationRevision }> {
+  return httpPost<{ cohort_specification: StudyAgentCohortSpecificationRevision }>(`${BASE}/${encodeURIComponent(sessionId)}/specification/logic-review`, review)
+}
+
+export function reopenStudyAgentCohortSpecificationLogic(sessionId: string): Promise<{ cohort_specification: StudyAgentCohortSpecificationRevision }> {
+  return httpPost<{ cohort_specification: StudyAgentCohortSpecificationRevision }>(`${BASE}/${encodeURIComponent(sessionId)}/specification/reopen-logic-review`, {})
+}
+
+export function projectStudyAgentCohortSpecification(sessionId: string): Promise<StudyAgentCohortDraft> {
+  return httpPost<StudyAgentCohortDraft>(`${BASE}/${encodeURIComponent(sessionId)}/specification/project`, {})
 }
 
 export function importStudyAgentPhenotypeDraft(sessionId: string, phenotypeId: string, recommendationContext: Record<string, unknown> = {}): Promise<StudyAgentCohortDraft> {

@@ -729,6 +729,7 @@
 import { logger } from '@/utils/logger'
 import AssetAuthorship from '@/components/shared/AssetAuthorship.vue'
 import { ref, computed, inject, watch, toRef, onBeforeUnmount, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
 import { useConceptSetsStore } from '@/stores/concept-sets'
 import { useNotifications } from '@/stores/notifications'
@@ -756,6 +757,8 @@ import { useWebAPIStore } from '@/stores/webapi'
 import { getSourceKey as getDefaultSourceKey } from '@/config/webapi'
 import { useStudyAgentConceptSetStore } from '@/stores/study-agent-concept-set'
 import { getStudyAgentConceptSetProvenance } from '@/services/study-agent-concept-set.service'
+import { attachStudyAgentCohortConceptSetSnapshot } from '@/services/study-agent-cohort-definition.service'
+import { clearStudyAgentCohortConceptSetHandoff, type StudyAgentCohortConceptSetHandoff } from '@/stores/study-agent-cohort-concept-set-handoff'
 import {
   parsePastedIds,
   parsePastedSourceCodes,
@@ -766,6 +769,7 @@ import {
 const { t, tv } = useI18n()
 const webapiStore = useWebAPIStore()
 const studyAgentStore = useStudyAgentConceptSetStore()
+const router = useRouter()
 
 function summarizeConceptValues(concepts: Concept[], field: 'domainId' | 'vocabularyId' | 'conceptClassId') {
   const counts = new Map<string, number>()
@@ -836,6 +840,8 @@ interface Props {
   modelValue: boolean
   conceptSet: ConceptSet | null
   embedded?: boolean
+  /** Present only when this drawer was explicitly opened for a cohort block. */
+  cohortHandoff?: StudyAgentCohortConceptSetHandoff
 }
 
 const props = defineProps<Props>()
@@ -1270,6 +1276,17 @@ async function onSave() {
           })
         }
         loadedTags.value = [...tagsToPersist]
+        const cohortHandoff = props.cohortHandoff
+        if (cohortHandoff) {
+          await attachStudyAgentCohortConceptSetSnapshot(
+            cohortHandoff.cohortSessionId,
+            cohortHandoff.slotId,
+            savedId,
+          )
+          clearStudyAgentCohortConceptSetHandoff()
+          notify.success('Concept-set snapshot linked to the cohort building block. Continue the cohort review to complete the remaining blocks.')
+          await router.push({ path: '/cohorts', query: { studyAgentCohortSession: cohortHandoff.cohortSessionId } })
+        }
       }
       hasUnsavedChanges.value = false
       emit('save')
@@ -1332,10 +1349,23 @@ function onDelete() {
   showDeleteConfirm.value = true
 }
 
-function confirmDelete() {
-  if (!props.conceptSet?.id) return
+async function confirmDelete() {
+  const conceptSetId = props.conceptSet?.id
+  if (conceptSetId === undefined || conceptSetId === null) return
+
+  loading.value = true
+  const deleted = await store.remove(conceptSetId)
+  loading.value = false
+  if (!deleted) {
+    notify.danger('Concept set could not be deleted', {
+      message: store.error || 'The server did not confirm deletion. The concept set remains open.',
+    })
+    return
+  }
+
   showDeleteConfirm.value = false
-  emit('delete', props.conceptSet.id)
+  notify.success('Concept set deleted')
+  emit('delete', conceptSetId)
   emit('update:modelValue', false)
 }
 

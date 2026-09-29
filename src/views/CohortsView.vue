@@ -95,6 +95,79 @@
         </cohort-filters>
       </div>
 
+      <div
+        v-if="resumeStudyAgentSession"
+        class="cohorts-view__study-agent-resume"
+      >
+        <div>
+          <strong>Cohort building-block review is ready to continue.</strong>
+          <p>A saved concept-set snapshot has been linked. Reopen the /ohdsi plan to review the remaining cohort components.</p>
+        </div>
+        <AtlasButton @click="resumeStudyAgentPlan()">
+          Resume /ohdsi cohort plan
+        </AtlasButton>
+      </div>
+
+      <section
+        v-if="studyAgentPlans.length"
+        class="cohorts-view__study-agent-plans"
+      >
+        <div class="cohorts-view__study-agent-plans-heading">
+          <h2>In-progress /ohdsi cohort plans</h2>
+          <p>These review-gated plans have not created a saved cohort definition.</p>
+        </div>
+        <article
+          v-for="plan in studyAgentPlans"
+          :key="plan.session_id"
+          class="cohorts-view__study-agent-plan"
+        >
+          <div>
+            <strong>{{ plan.narrative }}</strong>
+            <p>{{ planProgressLabel(plan) }}</p>
+          </div>
+          <div class="cohorts-view__study-agent-plan-actions">
+            <AtlasButton
+              size="sm"
+              @click="resumeStudyAgentPlan(plan.session_id)"
+            >
+              Resume plan
+            </AtlasButton>
+            <AtlasButton
+              size="sm"
+              variant="secondary"
+              @click="archiveCandidate = plan"
+            >
+              Archive
+            </AtlasButton>
+          </div>
+        </article>
+      </section>
+
+      <AtlasDialog
+        v-model="showArchivePlanDialog"
+        eyebrow="/ohdsi"
+        title="Archive unfinished cohort plan?"
+        max-width="560"
+      >
+        <p>This removes the plan from the in-progress list. Its review history and concept-set snapshots are retained for audit, but it will no longer be resumable in Atlas.</p>
+        <p><strong>{{ archiveCandidate?.narrative }}</strong></p>
+        <template #actions>
+          <AtlasButton
+            variant="secondary"
+            :disabled="archivingPlan"
+            @click="archiveCandidate = null"
+          >
+            Cancel
+          </AtlasButton>
+          <AtlasButton
+            :loading="archivingPlan"
+            @click="archiveStudyAgentPlan"
+          >
+            Archive plan
+          </AtlasButton>
+        </template>
+      </AtlasDialog>
+
       <!-- Filtering indicator -->
       <div
         v-if="filtering"
@@ -244,7 +317,11 @@
         </template>
       </AtlasDialog>
 
-      <StudyAgentCohortDialog v-model="showStudyAgentCohortDialog" />
+      <StudyAgentCohortDialog
+        v-model="showStudyAgentCohortDialog"
+        :resume-session-id="resumeStudyAgentSession"
+        @update:model-value="value => { if (!value) resumeStudyAgentSession = '' }"
+      />
 
       <!-- Delete Confirmation Dialog -->
       <AtlasDialog
@@ -368,7 +445,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, reactive } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
 import { useCohorts } from '@/composables/useCohorts'
 import { usePagination } from '@/composables/usePagination'
@@ -389,8 +466,11 @@ import CohortPagination from '@/components/cohort/CohortPagination.vue'
 import CohortFilters from '@/components/cohort/CohortFilters.vue'
 import StudyAgentCohortDialog from '@/components/cohort/StudyAgentCohortDialog.vue'
 import type { CohortDefinitionSummary } from '@/models/webapi.types'
+import type { StudyAgentCohortPlanSummary } from '@/models/study-agent.types'
+import { archiveStudyAgentCohortPlan, listStudyAgentCohortPlans } from '@/services/study-agent-cohort-definition.service'
 
 const router = useRouter()
+const route = useRoute()
 const { t } = useI18n()
 const { hasPermission } = usePermissions()
 const canCreateCohort = computed(() => hasPermission('create:cohort-definition'))
@@ -418,9 +498,86 @@ const showImportDialog = ref(false)
 const showDeleteDialog = ref(false)
 const showNewCohortDialog = ref(false)
 const showStudyAgentCohortDialog = ref(false)
+const resumeStudyAgentSession = ref('')
+const studyAgentPlans = ref<StudyAgentCohortPlanSummary[]>([])
+const archiveCandidate = ref<StudyAgentCohortPlanSummary | null>(null)
+const archivingPlan = ref(false)
+const showArchivePlanDialog = computed({
+  get: () => archiveCandidate.value !== null,
+  set: value => { if (!value) archiveCandidate.value = null },
+})
 const newCohortName = ref('')
 const selectedCohort = ref<CohortDefinitionSummary | null>(null)
 const deleting = ref(false)
+
+function routeSessionId() {
+  const routeValue = typeof route.query.studyAgentCohortSession === 'string'
+    ? route.query.studyAgentCohortSession.trim()
+    : ''
+  if (routeValue) return routeValue
+  const hash = window.location.hash
+  const queryStart = hash.indexOf('?')
+  return queryStart >= 0 ? (new URLSearchParams(hash.slice(queryStart + 1)).get('studyAgentCohortSession') ?? '').trim() : ''
+}
+
+function resumeStudyAgentPlan(selectedSessionId = '') {
+  const sessionId = selectedSessionId || resumeStudyAgentSession.value || routeSessionId()
+  if (!sessionId) return
+  resumeStudyAgentSession.value = sessionId
+  showStudyAgentCohortDialog.value = true
+}
+
+async function archiveStudyAgentPlan() {
+  const plan = archiveCandidate.value
+  if (!plan || archivingPlan.value) return
+  archivingPlan.value = true
+  try {
+    await archiveStudyAgentCohortPlan(plan.session_id)
+    studyAgentPlans.value = studyAgentPlans.value.filter(candidate => candidate.session_id !== plan.session_id)
+    if (resumeStudyAgentSession.value === plan.session_id) resumeStudyAgentSession.value = ''
+    archiveCandidate.value = null
+    showSnackbar('Unfinished /ohdsi cohort plan archived.')
+  } catch (err) {
+    logger.error('CohortsView', 'Unable to archive Study Agent cohort plan', err)
+    showSnackbar('Unable to archive the unfinished /ohdsi cohort plan.', 'danger')
+  } finally {
+    archivingPlan.value = false
+  }
+}
+
+function planProgressLabel(plan: StudyAgentCohortPlanSummary) {
+  if (plan.state === 'needs_component_review') {
+    return `${plan.reviewed_slot_count} of ${plan.concept_set_slot_count} concept-set policies reviewed`
+  }
+  if (plan.state === 'needs_logic_review') return 'Concept-set policies reviewed; confirm criterion bindings and cohort logic'
+  if (plan.state === 'ready_for_projection') return 'Binding and logic review complete; no executable cohort draft has been emitted'
+  return 'Review-gated cohort plan'
+}
+
+async function loadStudyAgentPlans() {
+  if (!canCreateCohort.value) return
+  try {
+    studyAgentPlans.value = (await listStudyAgentCohortPlans()).plans
+  } catch (err) {
+    // Optional authoring state must not make the ordinary cohort list fail.
+    logger.warn('CohortsView', 'Unable to load in-progress Study Agent cohort plans', err)
+  }
+}
+
+watch(
+  () => route.query.studyAgentCohortSession,
+  () => {
+    const sessionId = routeSessionId()
+    if (!sessionId) return
+    resumeStudyAgentSession.value = sessionId
+    showStudyAgentCohortDialog.value = true
+  },
+  { immediate: true, flush: 'post' },
+)
+
+onMounted(() => {
+  window.setTimeout(resumeStudyAgentPlan, 0)
+})
 
 // Import-cohort state
 const importName = ref('')
@@ -786,6 +943,7 @@ async function handleShowInfo(cohort: CohortDefinitionSummary) {
 // Fetch cohorts on component mount
 onMounted(() => {
   fetchCohorts()
+  void loadStudyAgentPlans()
 })
 
 // Deliberate, named test surface for the import flow (as opposed to the
@@ -807,6 +965,14 @@ defineExpose({
   width: 100%;
 }
 
+.cohorts-view__study-agent-resume { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 0 0 16px; padding: 14px 16px; border: 1px solid rgb(var(--v-theme-primary)); border-radius: 8px; background: rgba(var(--v-theme-primary), .05); }
+.cohorts-view__study-agent-resume p { margin: 4px 0 0; color: rgb(var(--v-theme-on-surface-variant)); }
+.cohorts-view__study-agent-plans { margin-bottom: 16px; padding: 16px; border: 1px solid rgb(var(--v-theme-outline-variant)); border-radius: 8px; }
+.cohorts-view__study-agent-plans-heading h2 { margin: 0; font-size: 1.05rem; }
+.cohorts-view__study-agent-plans-heading p, .cohorts-view__study-agent-plan p { margin: 4px 0 0; color: rgb(var(--v-theme-on-surface-variant)); }
+.cohorts-view__study-agent-plan { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0; border-top: 1px solid rgb(var(--v-theme-outline-variant)); }
+.cohorts-view__study-agent-plan-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.cohorts-view__study-agent-plan:first-of-type { margin-top: 10px; }
 .cohorts-view__toolbar {
   display: flex;
   align-items: center;

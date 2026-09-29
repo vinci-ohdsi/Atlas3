@@ -31,6 +31,25 @@ export function requestStudyAgentConceptSetProposal(sessionId: string, targetDom
   )
 }
 
+export interface StudyAgentConceptSetPolicyRow {
+  concept_id: number
+  is_excluded: boolean
+  include_descendants: boolean
+  include_mapped: boolean
+  rationale: string
+}
+
+export function reviewStudyAgentConceptSetCandidatePolicies(
+  sessionId: string,
+  sourceReviewRevision: number,
+  reviewedItems: StudyAgentConceptSetPolicyRow[],
+): Promise<{ proposal: unknown; review_revision?: number; source_review_revision: number }> {
+  return httpPost<{ proposal: unknown; review_revision?: number; source_review_revision: number }>(
+    `/study-agent/v1/concept-set-sessions/${encodeURIComponent(sessionId)}/proposal/review`,
+    { source_review_revision: sourceReviewRevision, reviewed_items: reviewedItems },
+  )
+}
+
 export function applyStudyAgentConceptSetProposal(
   sessionId: string,
   reviewRevision: number,

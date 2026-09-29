@@ -113,7 +113,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, nextTick } from 'vue'
 import { AtlasAlert, AtlasSelect, AtlasSnackbar, AtlasTextField } from '@/components/ui'
 import { useI18n } from '@/composables/useI18n'
 import { useConceptSearchStore } from '@/stores/concept-search'
@@ -209,13 +209,14 @@ function onSearchInput(value: string | null) {
   // No auto-search on typing to avoid blocking user flow
 }
 
-function onSearch() {
+async function onSearch() {
   const trimmed = searchInput.value.trim()
   if (trimmed.toLowerCase().startsWith('/ohdsi ')) {
     conceptSetsStore.openCreateEditor()
     studyAgentStore.queueNarrative(trimmed)
-    // Start the first request here rather than waiting for the drawer tab to
-    // mount. A lazy VWindow child can otherwise miss the queued prompt.
+    // Let the drawer reset/mount first. Starting in the same tick can race
+    // with its reset watcher and erase the newly created assistant session.
+    await nextTick()
     void studyAgentStore.start({
       command: '/ohdsi',
       message: trimmed.slice('/ohdsi'.length).trim(),

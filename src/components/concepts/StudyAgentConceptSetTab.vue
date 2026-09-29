@@ -221,6 +221,106 @@
             </tr>
           </tbody>
         </table>
+        <div
+          v-if="proposalCandidates.length"
+          class="study-agent-concept-set-tab__policy-workbench"
+        >
+          <AtlasButton
+            v-if="!showPolicyWorkbench"
+            variant="secondary"
+            @click="showPolicyWorkbench = true"
+          >
+            Review and stage candidate policies
+          </AtlasButton>
+          <template v-else>
+            <h3>Review candidate policies</h3>
+            <p class="study-agent-concept-set-tab__retrieval-note">
+              Select concepts from this bounded retrieval slice, assign an explicit policy, and validate the staged rows. This does not change Selected.
+            </p>
+            <ConceptTable
+              v-model:selected="selectedCandidateIds"
+              :concepts="candidateConcepts"
+              :total-items="candidateConcepts.length"
+              :items-per-page="50"
+              :selectable="true"
+              :linkable="true"
+              :source-key="props.sourceKey"
+            />
+            <div class="study-agent-concept-set-tab__policy-controls">
+              <AtlasCombobox
+                v-model="stagedPolicyKind"
+                label="Policy for selected candidates"
+                :items="['Include', 'Exclude']"
+                hide-details
+                variant="outlined"
+              />
+              <AtlasCheckbox
+                v-model="stagedIncludeDescendants"
+                label="Include descendants"
+              />
+              <AtlasCheckbox
+                v-model="stagedIncludeMapped"
+                label="Include mapped concepts"
+              />
+              <AtlasTextField
+                v-model="stagedRationale"
+                label="Review rationale"
+                placeholder="Why this policy fits the concept-set scope"
+                hide-details
+                variant="outlined"
+              />
+              <AtlasButton
+                variant="secondary"
+                :disabled="!selectedCandidateIds.length || !stagedRationale.trim()"
+                @click="stageSelectedCandidatePolicies"
+              >
+                Stage selected policies
+              </AtlasButton>
+            </div>
+            <div
+              v-if="stagedPolicyRows.length"
+              class="study-agent-concept-set-tab__staged-policies"
+            >
+              <h4>Staged policy rows ({{ stagedPolicyRows.length }})</h4>
+              <table>
+                <thead><tr><th>Concept ID</th><th>Policy</th><th>Rationale</th><th /></tr></thead>
+                <tbody>
+                  <tr
+                    v-for="item in stagedPolicyRows"
+                    :key="String(item.concept_id)"
+                  >
+                    <td>{{ item.concept_id }}</td>
+                    <td>{{ item.is_excluded ? 'Exclude' : 'Include' }}{{ item.include_descendants ? ' + descendants' : '' }}{{ item.include_mapped ? ' + mapped' : '' }}</td>
+                    <td>{{ item.rationale }}</td>
+                    <td>
+                      <AtlasButton
+                        variant="ghost"
+                        size="sm"
+                        @click="removeStagedCandidatePolicy(item.concept_id)"
+                      >
+                        Remove
+                      </AtlasButton>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <AtlasButton
+                :loading="assistant.loading"
+                :disabled="assistant.loading || reviewRevision === null"
+                @click="validateStagedCandidatePolicies"
+              >
+                Validate staged policies
+              </AtlasButton>
+            </div>
+            <AtlasButton
+              variant="ghost"
+              class="mt-2"
+              @click="showPolicyWorkbench = false"
+            >
+              Return to proposal summary
+            </AtlasButton>
+          </template>
+        </div>
         <div v-if="extensionDiff">
           <h3>Proposed saved-set changes</h3>
           <p class="study-agent-concept-set-tab__retrieval-note">
@@ -291,7 +391,9 @@
 
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { AtlasAlert, AtlasButton, AtlasCombobox, AtlasTextField } from '@/components/ui'
+import { AtlasAlert, AtlasButton, AtlasCheckbox, AtlasCombobox, AtlasTextField } from '@/components/ui'
+import ConceptTable from '@/components/concepts/ConceptTable.vue'
+import type { Concept } from '@/models/concept-set.types'
 import { useStudyAgentConceptSetStore } from '@/stores/study-agent-concept-set'
 import { atlasConceptSetInteractionProfile } from '@/models/study-agent.types'
 import { getStudyAgentConceptSetProvenance, type StudyAgentConceptSetProvenance } from '@/services/study-agent-concept-set.service'
@@ -315,7 +417,15 @@ const proposalAppliedForReview = ref(false)
 const showDialogueComposer = ref(false)
 const composerPanel = ref<HTMLElement | null>(null)
 const priorProvenance = ref<StudyAgentConceptSetProvenance | null>(null)
-const proposalDomains = ['Drug', 'Condition', 'Measurement', 'Procedure', 'Observation']
+const showPolicyWorkbench = ref(false)
+const selectedCandidateIds = ref<number[]>([])
+const stagedPolicyKind = ref('Include')
+const stagedIncludeDescendants = ref(false)
+const stagedIncludeMapped = ref(false)
+const stagedRationale = ref('')
+const stagedPolicies = ref<Record<number, { concept_id: number; is_excluded: boolean; include_descendants: boolean; include_mapped: boolean; rationale: string }>>({})
+const stagedForReviewRevision = ref<number | null>(null)
+const proposalDomains = ['Condition', 'Drug', 'Procedure', 'Measurement', 'Observation', 'Visit', 'Device']
 const canSubmit = computed(() => !!narrative.value.trim())
 const hasSession = computed(() => !!assistant.session?.session_id)
 watch(
@@ -339,8 +449,31 @@ const showComposer = computed(() => canReply.value && !dialogue.value?.questions
 const proposalData = computed(() => assistant.proposal as Record<string, unknown> | null)
 const proposalCandidates = computed(() => Array.isArray(proposalData.value?.candidates) ? proposalData.value.candidates as Array<Record<string, unknown>> : [])
 const proposalItems = computed(() => Array.isArray(proposalData.value?.proposed_items) ? proposalData.value.proposed_items as Array<Record<string, unknown>> : [])
+const candidateConcepts = computed<Concept[]>(() => proposalCandidates.value.flatMap(candidate => {
+  const conceptId = Number(candidate.conceptId)
+  if (!Number.isInteger(conceptId) || conceptId <= 0) return []
+  return [{
+    conceptId,
+    conceptName: String(candidate.conceptName ?? ''),
+    conceptCode: String(candidate.conceptCode ?? conceptId),
+    domainId: String(candidate.domainId ?? ''),
+    vocabularyId: String(candidate.vocabularyId ?? ''),
+    conceptClassId: String(candidate.conceptClassId ?? ''),
+    standardConcept: candidate.standardConcept === null ? null : String(candidate.standardConcept ?? ''),
+    invalidReason: candidate.invalidReason === null || candidate.invalidReason === undefined ? null : String(candidate.invalidReason),
+  }]
+}))
+const stagedPolicyRows = computed(() => Object.values(stagedPolicies.value).sort((left, right) => left.concept_id - right.concept_id))
 const proposalValidationPassed = computed(() => (proposalData.value?.validation as Record<string, unknown> | undefined)?.status === 'passed')
-const reviewRevision = computed(() => typeof proposalData.value?.review_revision === 'number' ? proposalData.value.review_revision : null)
+const policyRowsValidatedByReviewer = computed(() => {
+  const provenance = proposalData.value?.candidate_provenance as Record<string, unknown> | undefined
+  return provenance?.tool === 'user_reviewed_candidate_slice'
+})
+const reviewRevision = computed(() => {
+  const value = proposalData.value?.review_revision
+  const revision = typeof value === 'number' ? value : Number(value)
+  return Number.isInteger(revision) && revision > 0 ? revision : null
+})
 const retrievalRuns = computed(() => {
   const provenance = proposalData.value?.candidate_provenance as Record<string, unknown> | undefined
   const perTerm = Array.isArray(provenance?.per_term) ? provenance.per_term as Array<Record<string, unknown>> : []
@@ -360,6 +493,9 @@ const applyUnavailableReason = computed(() => {
   if (!proposalValidationPassed.value) {
     return 'This provisional policy did not pass technical validation, so it cannot be applied to Selected.'
   }
+  if (!policyRowsValidatedByReviewer.value) {
+    return 'Review the bounded candidate slice and explicitly validate the staged policy rows before applying them to Selected.'
+  }
   if (reviewRevision.value === null) {
     return 'This proposal has not been persisted as a review revision, so it cannot be applied to Selected.'
   }
@@ -373,8 +509,9 @@ const applyUnavailableReason = computed(() => {
 })
 const extensionDiff = computed(() => {
   const value = proposalData.value?.extension_diff
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown> : null
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const diff = value as Record<string, unknown>
+  return Object.keys(diff).length ? diff : null
 })
 const extensionAdditions = computed(() => Array.isArray(extensionDiff.value?.additions) ? extensionDiff.value.additions : [])
 const extensionPolicyChanges = computed(() => Array.isArray(extensionDiff.value?.policy_changes) ? extensionDiff.value.policy_changes : [])
@@ -383,6 +520,7 @@ const canApplyProposal = computed(() => (
   (props.mode === 'new' ? Number(props.expressionSummary?.selected_item_count ?? 0) === 0 : !!extensionDiff.value)
   && proposalItems.value.length > 0
   && proposalValidationPassed.value
+  && policyRowsValidatedByReviewer.value
   && reviewRevision.value !== null
 ))
 const dialogueHistory = computed(() => {
@@ -463,6 +601,61 @@ async function reply() {
   }
 }
 
+function resetStagedPoliciesFromProposal() {
+  const next: Record<number, { concept_id: number; is_excluded: boolean; include_descendants: boolean; include_mapped: boolean; rationale: string }> = {}
+  for (const item of proposalItems.value) {
+    const conceptId = Number(item.concept_id)
+    if (!Number.isInteger(conceptId) || conceptId <= 0) continue
+    next[conceptId] = {
+      concept_id: conceptId,
+      is_excluded: Boolean(item.is_excluded),
+      include_descendants: Boolean(item.include_descendants),
+      include_mapped: Boolean(item.include_mapped),
+      rationale: String(item.rationale ?? 'Initial /ohdsi proposal; confirm or revise during review.'),
+    }
+  }
+  stagedPolicies.value = next
+  selectedCandidateIds.value = []
+  stagedPolicyKind.value = 'Include'
+  stagedIncludeDescendants.value = false
+  stagedIncludeMapped.value = false
+  stagedRationale.value = ''
+}
+
+function stageSelectedCandidatePolicies() {
+  const rationale = stagedRationale.value.trim()
+  if (!rationale) return
+  const next = { ...stagedPolicies.value }
+  for (const conceptId of selectedCandidateIds.value) {
+    next[conceptId] = {
+      concept_id: conceptId,
+      is_excluded: stagedPolicyKind.value === 'Exclude',
+      include_descendants: stagedIncludeDescendants.value,
+      include_mapped: stagedIncludeMapped.value,
+      rationale,
+    }
+  }
+  stagedPolicies.value = next
+  selectedCandidateIds.value = []
+  stagedRationale.value = ''
+}
+
+function removeStagedCandidatePolicy(conceptId: number) {
+  const next = { ...stagedPolicies.value }
+  delete next[conceptId]
+  stagedPolicies.value = next
+}
+
+async function validateStagedCandidatePolicies() {
+  if (reviewRevision.value === null || !stagedPolicyRows.value.length) return
+  try {
+    await assistant.reviewCandidatePolicies(reviewRevision.value, stagedPolicyRows.value)
+    showPolicyWorkbench.value = false
+  } catch {
+    // The store retains a user-facing error; keep the staged rows for correction.
+  }
+}
+
 async function requestProposal() {
   proposalAppliedForReview.value = false
   showDialogueComposer.value = false
@@ -481,6 +674,16 @@ async function applyProposal() {
     // The store retains a user-facing error; avoid a second unhandled UI error.
   }
 }
+
+watch(
+  reviewRevision,
+  revision => {
+    if (revision === null || revision === stagedForReviewRevision.value) return
+    resetStagedPoliciesFromProposal()
+    stagedForReviewRevision.value = revision
+  },
+  { immediate: true },
+)
 
 watch(
   () => props.active,
@@ -514,4 +717,8 @@ watch(
 .study-agent-concept-set-tab__retrieval-note { margin: 8px 0 0; color: rgb(var(--v-theme-on-surface-variant)); }
 .study-agent-concept-set-tab__retrieval-runs { margin: 8px 0 16px; padding-left: 20px; color: rgb(var(--v-theme-on-surface-variant)); }
 .study-agent-concept-set-tab__follow-up { margin-top: 24px; border-top: 1px solid rgb(var(--v-theme-outline-variant)); padding-top: 20px; }
+.study-agent-concept-set-tab__policy-workbench { margin-top: 20px; border-top: 1px solid rgb(var(--v-theme-outline-variant)); padding-top: 16px; }
+.study-agent-concept-set-tab__policy-controls { display: grid; gap: 12px; margin-top: 16px; }
+.study-agent-concept-set-tab__staged-policies { margin-top: 20px; }
+.study-agent-concept-set-tab__staged-policies h4 { margin-bottom: 8px; }
 </style>

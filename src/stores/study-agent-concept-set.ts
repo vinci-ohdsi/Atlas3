@@ -5,6 +5,8 @@ import {
   finalizeStudyAgentConceptSetProposal,
   continueStudyAgentConceptSetSession,
   requestStudyAgentConceptSetProposal,
+  reviewStudyAgentConceptSetCandidatePolicies,
+  type StudyAgentConceptSetPolicyRow,
   startStudyAgentConceptSetSession,
 } from '@/services/study-agent-concept-set.service'
 import type {
@@ -104,6 +106,27 @@ export const useStudyAgentConceptSetStore = defineStore('study-agent-concept-set
     } finally { loading.value = false }
   }
 
+  async function reviewCandidatePolicies(sourceReviewRevision: number, reviewedItems: StudyAgentConceptSetPolicyRow[]) {
+    if (!session.value?.session_id) return null
+    loading.value = true
+    error.value = null
+    try {
+      const response = await reviewStudyAgentConceptSetCandidatePolicies(
+        session.value.session_id,
+        sourceReviewRevision,
+        reviewedItems,
+      )
+      proposal.value = {
+        ...(response.proposal as Record<string, unknown>),
+        ...(response.review_revision !== undefined ? { review_revision: response.review_revision } : {}),
+      }
+      return proposal.value
+    } catch (caught) {
+      error.value = caught instanceof Error ? caught.message : 'Unable to validate the selected concept policies.'
+      throw caught
+    } finally { loading.value = false }
+  }
+
   async function applyProposal(reviewRevision: number) {
     if (!session.value?.session_id) return null
     loading.value = true
@@ -136,5 +159,5 @@ export const useStudyAgentConceptSetStore = defineStore('study-agent-concept-set
     } finally { loading.value = false }
   }
 
-  return { pendingNarrative, session, loading, error, proposal, appliedReviewRevision, queueNarrative, consumePendingNarrative, resetDrawerState, start, reply, requestProposal, applyProposal, finalizeSavedConceptSet }
+  return { pendingNarrative, session, loading, error, proposal, appliedReviewRevision, queueNarrative, consumePendingNarrative, resetDrawerState, start, reply, requestProposal, reviewCandidatePolicies, applyProposal, finalizeSavedConceptSet }
 })

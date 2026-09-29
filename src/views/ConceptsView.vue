@@ -34,6 +34,20 @@
         </AtlasTabs>
       </nav>
 
+      <div
+        v-if="hasCohortHandoff && !conceptSetsStore.editorOpen"
+        class="concepts-view__cohort-handoff"
+      >
+        <strong>Continue cohort concept-set review</strong>
+        <span>The requested building block is ready to open in the concept-set editor.</span>
+        <AtlasButton
+          size="sm"
+          @click="openCohortHandoffWorkbench"
+        >
+          Open concept-set review
+        </AtlasButton>
+      </div>
+
       <v-window v-model="activeTab">
         <v-window-item value="sets">
           <ConceptSetList />
@@ -49,9 +63,13 @@
         v-if="conceptSetsStore.editorOpen"
         :model-value="conceptSetsStore.editorOpen"
         :concept-set="conceptSetsStore.currentSet"
+        :cohort-handoff="activeCohortHandoff ?? undefined"
         @update:model-value="
           value => {
-            if (!value) conceptSetsStore.closeEditor()
+            if (!value) {
+              activeCohortHandoff = null
+              conceptSetsStore.closeEditor()
+            }
           }
         "
         @save="onEditorSave"
@@ -62,21 +80,26 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, provide, watch } from 'vue'
+import { ref, computed, provide, watch, nextTick, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
-import { AtlasIcon, AtlasPageShell, AtlasTab, AtlasTabs } from '@/components/ui'
+import { AtlasButton, AtlasIcon, AtlasPageShell, AtlasTab, AtlasTabs } from '@/components/ui'
 import ConceptSearch from '@/components/concepts/ConceptSearch.vue'
 import ConceptSetList from '@/components/concepts/ConceptSetList.vue'
 import ConceptSetEditor from '@/components/concepts/ConceptSetEditor.vue'
 import { useConceptSetsStore } from '@/stores/concept-sets'
 import { useWebAPIStore } from '@/stores/webapi'
 import { getSourceKey as getDefaultSourceKey } from '@/config/webapi'
+import { getStudyAgentCohortConceptSetHandoff, type StudyAgentCohortConceptSetHandoff } from '@/stores/study-agent-cohort-concept-set-handoff'
+import { useStudyAgentConceptSetStore } from '@/stores/study-agent-concept-set'
 
 const route = useRoute()
 const router = useRouter()
 const conceptSetsStore = useConceptSetsStore()
 const webapiStore = useWebAPIStore()
+const studyAgentStore = useStudyAgentConceptSetStore()
+let openedCohortHandoffKey = ''
+const activeCohortHandoff = ref<StudyAgentCohortConceptSetHandoff | null>(null)
 const { t } = useI18n()
 
 const pageTitle = computed(() => t('cs.browser.caption', 'Concepts').value)
@@ -99,14 +122,54 @@ const sourceKey = computed(
 // to keep the existing inject contract — `inject<{ value: string }>('sourceKey')`).
 provide('sourceKey', sourceKey)
 
+function routeText(value: unknown) {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function handoffQuery(name: string) {
+  const routeValue = routeText(route.query[name])
+  if (routeValue) return routeValue
+  const hash = window.location.hash
+  const queryStart = hash.indexOf('?')
+  return queryStart >= 0 ? (new URLSearchParams(hash.slice(queryStart + 1)).get(name) ?? '').trim() : ''
+}
+
+const hasCohortHandoff = computed(() => Boolean(
+  handoffQuery('cohortStudyAgentSession') && handoffQuery('cohortConceptSetSlot'),
+))
+
+async function openCohortHandoffWorkbench() {
+  const sessionId = handoffQuery('cohortStudyAgentSession')
+  const slotId = handoffQuery('cohortConceptSetSlot')
+  if (!sessionId || !slotId) return
+  const stored = getStudyAgentCohortConceptSetHandoff()
+  const label = handoffQuery('cohortConceptSetLabel') || stored?.label || 'Cohort concept set'
+  const domain = handoffQuery('cohortConceptSetDomain') || stored?.domain || 'the requested OMOP domain'
+  const criterionRole = handoffQuery('cohortCriterionRole') || stored?.criterionRole || 'cohort criterion'
+  const handoffKey = `${sessionId}:${slotId}`
+  if (openedCohortHandoffKey === handoffKey && conceptSetsStore.editorOpen) return
+  activeCohortHandoff.value = { cohortSessionId: sessionId, slotId, label, domain, criterionRole }
+  activeTab.value = 'sets'
+  studyAgentStore.queueNarrative(
+    `Create a reusable ${domain} concept set for the cohort building block “${label}”. `
+    + `It will be used as ${criterionRole.replace(/_/g, ' ')} evidence. `
+    + 'Review terminology policy only; cohort timing and Boolean logic stay in the cohort definition.',
+  )
+  conceptSetsStore.openCreateEditor()
+  await nextTick()
+  openedCohortHandoffKey = handoffKey
+}
+
 async function onEditorSave() {
+  activeCohortHandoff.value = null
   await conceptSetsStore.fetchAll()
 }
 
-async function onEditorDelete(id: number | string) {
-  await conceptSetsStore.remove(id)
-  // The editor also emits update:modelValue(false) on delete, which closes the
-  // drawer too; this explicit close is intentional, idempotent defense.
+function onEditorDelete() {
+  // ConceptSetEditor performs the asynchronous delete so it can keep the
+  // drawer open and show the server error on failure. This handler only clears
+  // the page-level handoff state after a confirmed deletion.
+  activeCohortHandoff.value = null
   conceptSetsStore.closeEditor()
 }
 
@@ -121,6 +184,20 @@ watch(
   },
   { immediate: true }
 )
+// This page can remain mounted under the host shell. Read session storage at
+// route-transition time rather than capturing an old handoff at component mount.
+watch(
+  () => [route.query.cohortStudyAgentSession, route.query.cohortConceptSetSlot] as const,
+  async () => { await openCohortHandoffWorkbench() },
+  { immediate: true, flush: 'post' },
+)
+
+onMounted(() => {
+  // The host shell may update the hash after Vue's first route watcher. Retry
+  // once from the concrete browser URL; the action is idempotent.
+  window.setTimeout(() => { void openCohortHandoffWorkbench() }, 0)
+})
+
 </script>
 
 <style scoped>
@@ -135,6 +212,8 @@ watch(
  * horizontal padding so the rail spans the full width. With the hero
  * header above, the rail flows below it naturally — no negative
  * top margin. */
+.concepts-view__cohort-handoff { display: flex; align-items: center; gap: 12px; margin: 0 0 16px; padding: 12px 16px; border: 1px solid rgb(var(--v-theme-primary)); border-radius: 6px; background: rgba(var(--v-theme-primary), .05); }
+.concepts-view__cohort-handoff span { flex: 1; color: rgb(var(--v-theme-on-surface-variant)); }
 .concepts-view__tabs-rail {
   margin-inline: -32px;
   margin-bottom: 16px;
