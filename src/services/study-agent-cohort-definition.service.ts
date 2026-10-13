@@ -19,6 +19,10 @@ export function prepareStudyAgentPhenotypeConversion(sessionId: string, phenotyp
   return httpPost<{ conversion: Record<string, unknown> }>(`${BASE}/${encodeURIComponent(sessionId)}/phenotypes/${encodeURIComponent(phenotypeId)}/conversion-prepare`, { recommendation_context: recommendationContext })
 }
 
+export function askStudyAgentCohortAuthoringDialogue(sessionId: string, message: string, stage: string, context: Record<string, unknown> = {}): Promise<{ dialogue: StudyAgentCohortRefinementDialogue }> {
+  return httpPost<{ dialogue: StudyAgentCohortRefinementDialogue }>(`${BASE}/${encodeURIComponent(sessionId)}/dialogue`, { message, stage, context })
+}
+
 export function continueStudyAgentMakeComputable(sessionId: string, request: Record<string, unknown>): Promise<{ flow: Record<string, unknown>; cohort_specification?: StudyAgentCohortSpecificationRevision }> {
   return httpPost<{ flow: Record<string, unknown>; cohort_specification?: StudyAgentCohortSpecificationRevision }>(`${BASE}/${encodeURIComponent(sessionId)}/make-computable`, request)
 }
