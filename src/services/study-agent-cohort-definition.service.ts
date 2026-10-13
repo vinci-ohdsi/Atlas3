@@ -3,8 +3,8 @@ import type { StudyAgentCohortCritique, StudyAgentCohortDraft, StudyAgentCohortR
 
 const BASE = '/study-agent/v1/cohort-definition-sessions'
 
-export function startStudyAgentCohortSession(narrative: string, route: StudyAgentCohortRoute): Promise<StudyAgentCohortSession> {
-  return httpPost<StudyAgentCohortSession>(BASE, { narrative, route })
+export function startStudyAgentCohortSession(narrative: string, route: StudyAgentCohortRoute, sourceContext: Record<string, unknown> = {}): Promise<StudyAgentCohortSession> {
+  return httpPost<StudyAgentCohortSession>(BASE, { narrative, route, source_context: sourceContext })
 }
 
 export function requestStudyAgentCohortRecommendations(sessionId: string, request: { candidate_offset?: number } = {}): Promise<{ recommendations: Record<string, unknown> }> {
@@ -13,6 +13,10 @@ export function requestStudyAgentCohortRecommendations(sessionId: string, reques
 
 export function searchStudyAgentPhenotypeLibrary(sessionId: string, query: string): Promise<{ catalog: Record<string, unknown> }> {
   return httpPost<{ catalog: Record<string, unknown> }>(`${BASE}/${encodeURIComponent(sessionId)}/library-search`, { query })
+}
+
+export function prepareStudyAgentPhenotypeConversion(sessionId: string, phenotypeId: string, recommendationContext: Record<string, unknown> = {}): Promise<{ conversion: Record<string, unknown> }> {
+  return httpPost<{ conversion: Record<string, unknown> }>(`${BASE}/${encodeURIComponent(sessionId)}/phenotypes/${encodeURIComponent(phenotypeId)}/conversion-prepare`, { recommendation_context: recommendationContext })
 }
 
 export function continueStudyAgentMakeComputable(sessionId: string, request: Record<string, unknown>): Promise<{ flow: Record<string, unknown>; cohort_specification?: StudyAgentCohortSpecificationRevision }> {

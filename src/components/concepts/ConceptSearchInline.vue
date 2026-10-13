@@ -27,6 +27,19 @@
     </AtlasTextField>
 
     <!-- Error Message -->
+
+    <AtlasAlert
+      v-if="prefillNotices.length"
+      severity="warning"
+      class="mb-4"
+    >
+      <div
+        v-for="notice in prefillNotices"
+        :key="notice"
+      >
+        {{ notice }}
+      </div>
+    </AtlasAlert>
     <AtlasAlert
       v-if="store.error"
       severity="danger"
@@ -78,7 +91,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { AtlasAlert, AtlasButton, AtlasTextField } from '@/components/ui'
 import { useI18n } from '@/composables/useI18n'
 import { useConceptSearchStore } from '@/stores/concept-search'
@@ -87,6 +100,16 @@ import ConceptTable from './ConceptTable.vue'
 import ConceptFacetFilters from './ConceptFacetFilters.vue'
 import ConceptAddOptions from './ConceptAddOptions.vue'
 import type { Concept, ConceptAddFlags } from '@/models/concept-set.types'
+
+interface SearchPrefill {
+  term?: string
+  domain?: string
+  vocabulary?: string
+}
+
+const props = defineProps<{
+  initialSearch?: SearchPrefill
+}>()
 
 const { t, tv } = useI18n()
 
@@ -114,6 +137,14 @@ const emit = defineEmits<{
 
 const searchInput = ref<string>('')
 const selected = ref<number[]>([])
+const appliedPrefillKey = ref('')
+const prefillNotices = ref<string[]>([])
+
+// R records a requested domain as reviewer intent. Only these canonical OMOP
+// domains are safe to turn into an Atlas facet without guessing at a typo.
+const SUPPORTED_DOMAIN_FACETS = [
+  'Condition', 'Drug', 'Procedure', 'Measurement', 'Observation', 'Visit', 'Device',
+]
 
 // Sticky across searches on purpose: the point of the add box is to set the
 // intent once and then collect concepts over several queries.
@@ -175,6 +206,57 @@ function onClear() {
   searchInput.value = ''
   store.clearSearch()
 }
+
+async function applyInitialSearch(prefill: SearchPrefill | undefined) {
+  const term = String(prefill?.term ?? '').trim()
+  const domain = String(prefill?.domain ?? '').trim()
+  const vocabulary = String(prefill?.vocabulary ?? '').trim()
+  const key = `${term}\u0000${domain}\u0000${vocabulary}`
+  if (!term || key === appliedPrefillKey.value) return
+  appliedPrefillKey.value = key
+  prefillNotices.value = []
+  searchInput.value = term
+  if (term.length < 3) return
+  await store.search(term)
+
+  // These are optional facets on the normal Atlas result set, never a
+  // concept-set policy. Preserve the R-requested scope as provenance, but do
+  // not silently turn unknown names into a zero-result filter.
+  const returnedDomains = new Set(store.allConcepts.map(concept => concept.domainId))
+  const returnedVocabularies = Array.from(new Set(store.allConcepts.map(concept => concept.vocabularyId)))
+  const canonicalDomain = SUPPORTED_DOMAIN_FACETS.find(
+    candidate => candidate.toLowerCase() === domain.toLowerCase(),
+  )
+  const canonicalVocabulary = returnedVocabularies.find(
+    candidate => candidate.toLowerCase() === vocabulary.toLowerCase(),
+  )
+  if (domain && !canonicalDomain) {
+    prefillNotices.value.push(
+      `The R workflow requested domain “${domain}”, which is not a supported Atlas domain filter. Search remains unfiltered by domain.`,
+    )
+  } else if (canonicalDomain) {
+    store.setFacet('domainId', [canonicalDomain])
+    if (!returnedDomains.has(canonicalDomain)) {
+      prefillNotices.value.push(
+        `The R workflow requested domain “${canonicalDomain}”, but the local search for “${term}” returned no concepts in that domain. You can clear the domain filter or refine the search.`,
+      )
+    }
+  }
+
+  if (vocabulary && !canonicalVocabulary) {
+    prefillNotices.value.push(
+      `The R workflow requested vocabulary “${vocabulary}”, but it could not be applied to the returned local search results. Search remains unfiltered by vocabulary.`,
+    )
+  } else if (canonicalVocabulary) {
+    store.setFacet('vocabularyId', [canonicalVocabulary])
+  }
+}
+
+watch(
+  () => props.initialSearch,
+  prefill => { void applyInitialSearch(prefill) },
+  { immediate: true, deep: true },
+)
 
 function onPageChange(page: number) {
   store.updatePagination(page, store.itemsPerPage)

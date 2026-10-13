@@ -71,6 +71,42 @@ export function finalizeStudyAgentConceptSetProposal(
   )
 }
 
+export interface StudyAgentExternalReviewStatus {
+  session_id: string
+  state: 'external_review_pending' | 'external_review_accepted' | string
+  concept_set_id: number
+  review_revision?: number
+  expression_checksum?: string
+  expression?: unknown
+  external_review?: {
+    source?: string
+    review_id?: string
+    workflow_id?: string
+    role_label?: string
+    candidate_count?: number
+    scope?: Record<string, unknown>
+    candidate_summary?: Record<string, unknown>
+  }
+}
+
+export type StudyAgentExternalReviewContext = NonNullable<StudyAgentExternalReviewStatus['external_review']>
+
+export function getStudyAgentExternalReviewStatus(sessionId: string): Promise<StudyAgentExternalReviewStatus> {
+  return httpGet<StudyAgentExternalReviewStatus>(
+    `/study-agent/v1/concept-set-sessions/external-review/${encodeURIComponent(sessionId)}`,
+  )
+}
+
+export function finalizeStudyAgentExternalReview(
+  sessionId: string,
+  conceptSetId: number | string,
+): Promise<StudyAgentExternalReviewStatus> {
+  return httpPost<StudyAgentExternalReviewStatus>(
+    `/study-agent/v1/concept-set-sessions/external-review/${encodeURIComponent(sessionId)}/finalize?conceptSetId=${encodeURIComponent(String(conceptSetId))}`,
+    {},
+  )
+}
+
 export interface StudyAgentConceptSetProvenance {
   available: boolean
   provenance?: { goal?: string; review_revision?: number; last_active_at?: string; last_assistant_summary?: string; matches_current_expression?: boolean | null }

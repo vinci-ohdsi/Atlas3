@@ -178,6 +178,22 @@
           </header>
 
           <div class="cs-editor__main">
+            <section
+              v-if="externalReviewContext"
+              class="cs-editor__external-review"
+            >
+              <strong>R workflow review</strong>
+              <p>
+                Review the normal Atlas concept-set expression for the R workflow.
+                Search begins with the supplied clinical term and scope; no concepts or policy have been added.
+              </p>
+              <dl>
+                <template v-if="externalReviewContext.roleLabel"><dt>Criterion role</dt><dd>{{ externalReviewContext.roleLabel }}</dd></template>
+                <template v-if="externalReviewContext.indexTerm"><dt>Index term</dt><dd>{{ externalReviewContext.indexTerm }}</dd></template>
+                <template v-if="externalReviewContext.domain"><dt>Domain</dt><dd>{{ externalReviewContext.domain }}</dd></template>
+                <template v-if="externalReviewContext.vocabulary"><dt>Vocabulary</dt><dd>{{ externalReviewContext.vocabulary }}</dd></template>
+              </dl>
+            </section>
             <!-- Tabs rail: same shared treatment as the outer page tabs. -->
             <nav class="page-tabs-rail cs-editor__tabs-rail">
               <AtlasTabs
@@ -337,6 +353,7 @@
                 <!-- Search Tab -->
                 <v-window-item value="search">
                   <ConceptSearchInline
+                    :initial-search="externalReviewSearchPrefill"
                     @add-concept="onAddConcept"
                     @add-concepts="onAddConcepts"
                     @remove-concept="onRemoveConcept"
@@ -352,6 +369,7 @@
                     :concept-set-id="props.conceptSet?.id"
                     :source-key="sourceKey"
                     :expression-summary="studyAgentExpressionSummary"
+                    :external-review="props.externalReview"
                     @proposal-applied="onStudyAgentProposalApplied"
                   />
                 </v-window-item>
@@ -756,7 +774,8 @@ import { getConceptsByIds, getConceptsBySourceCodes } from '@/services/concept-s
 import { useWebAPIStore } from '@/stores/webapi'
 import { getSourceKey as getDefaultSourceKey } from '@/config/webapi'
 import { useStudyAgentConceptSetStore } from '@/stores/study-agent-concept-set'
-import { getStudyAgentConceptSetProvenance } from '@/services/study-agent-concept-set.service'
+import { finalizeStudyAgentExternalReview, getStudyAgentConceptSetProvenance } from '@/services/study-agent-concept-set.service'
+import type { StudyAgentExternalReviewContext } from '@/services/study-agent-concept-set.service'
 import { attachStudyAgentCohortConceptSetSnapshot } from '@/services/study-agent-cohort-definition.service'
 import { clearStudyAgentCohortConceptSetHandoff, type StudyAgentCohortConceptSetHandoff } from '@/stores/study-agent-cohort-concept-set-handoff'
 import {
@@ -842,6 +861,10 @@ interface Props {
   embedded?: boolean
   /** Present only when this drawer was explicitly opened for a cohort block. */
   cohortHandoff?: StudyAgentCohortConceptSetHandoff
+  /** R created this normal Atlas asset and awaits one immutable saved snapshot. */
+  externalReviewSessionId?: string
+  /** Read-only scope sent by R with an external review session. */
+  externalReview?: StudyAgentExternalReviewContext
 }
 
 const props = defineProps<Props>()
@@ -872,6 +895,37 @@ const authorship = computed(() => {
   }
 })
 const notify = useNotifications()
+
+function externalReviewText(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+function externalReviewCriterion(scope: Record<string, unknown>, key: 'criterion_domains' | 'criterion_vocabularies', indexTerm: string): string {
+  const criteria = scope[key]
+  if (!criteria || typeof criteria !== 'object' || Array.isArray(criteria)) return ''
+  const values = criteria as Record<string, unknown>
+  const value = values[indexTerm] ?? Object.values(values)[0]
+  if (Array.isArray(value)) return externalReviewText(value[0])
+  return externalReviewText(value)
+}
+const externalReviewContext = computed(() => {
+  const review = props.externalReview
+  if (!review) return null
+  const scope = review.scope && typeof review.scope === 'object' && !Array.isArray(review.scope)
+    ? review.scope as Record<string, unknown>
+    : {}
+  const indexTerm = externalReviewText(scope.index_event)
+  return {
+    roleLabel: externalReviewText(review.role_label).replace(/_/g, ' '),
+    indexTerm,
+    domain: externalReviewCriterion(scope, 'criterion_domains', indexTerm),
+    vocabulary: externalReviewCriterion(scope, 'criterion_vocabularies', indexTerm),
+  }
+})
+const externalReviewSearchPrefill = computed(() => {
+  const context = externalReviewContext.value
+  if (!context?.indexTerm) return undefined
+  return { term: context.indexTerm, domain: context.domain, vocabulary: context.vocabulary }
+})
 
 // ============================================================================
 // Local State
@@ -928,6 +982,8 @@ watch(
       const isExisting = props.conceptSet?.id !== undefined && props.conceptSet?.id !== null
       activeTab.value = studyAgentStore.pendingNarrative
         ? 'assistant'
+        : props.externalReviewSessionId
+          ? 'search'
         : isExisting
           ? 'selected'
           : 'search'
@@ -1263,6 +1319,14 @@ async function onSave() {
       if (savedId !== undefined && savedId !== null) {
         if (studyAgentStore.appliedReviewRevision !== null) {
           await studyAgentStore.finalizeSavedConceptSet(savedId)
+        } else if (props.externalReviewSessionId) {
+          const externalReview = await finalizeStudyAgentExternalReview(props.externalReviewSessionId, savedId)
+          notify.success('Atlas review snapshot accepted. Return to R to resume the phenotype workflow.')
+          logger.info('ConceptSetEditor', 'Finalized external Study Agent review', {
+            sessionId: externalReview.session_id,
+            reviewRevision: externalReview.review_revision,
+            expressionChecksum: externalReview.expression_checksum,
+          })
         } else if (isEditMode.value) {
           const provenance = await getStudyAgentConceptSetProvenance(savedId)
           if (provenance.provenance?.matches_current_expression === false) {
@@ -1759,6 +1823,12 @@ function closeJsonDialog() {
   flex-shrink: 0;
   padding-top: 4px;
 }
+
+.cs-editor__external-review { margin: 16px 24px 0; padding: 14px 16px; border: 1px solid rgb(var(--v-theme-primary)); border-radius: 6px; background: rgba(var(--v-theme-primary), .05); }
+.cs-editor__external-review p { margin: 6px 0; color: rgb(var(--v-theme-on-surface-variant)); }
+.cs-editor__external-review dl { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; margin: 8px 0 0; }
+.cs-editor__external-review dt { font-weight: 600; }
+.cs-editor__external-review dd { margin: 0; }
 
 /* Tabs rail nests against the page-shell visuals; pull the rail
  * across the full drawer width (cancel header padding) and keep

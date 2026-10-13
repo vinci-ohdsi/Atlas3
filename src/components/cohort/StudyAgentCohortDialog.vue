@@ -48,6 +48,76 @@
       New computable definition authoring is review-gated. /ohdsi will first collect scope decisions; no candidate policy or Circe draft is emitted at this step.
     </AtlasAlert>
     <section
+      v-if="conversionPreparation && !makeComputableSessionStarted"
+      class="study-agent-cohort-dialog__conversion"
+    >
+      <h3>Choose a starting component for conversion</h3>
+      <p>
+        <strong>{{ conversionTitle }}</strong> is reference evidence, not an executable cohort definition. Choose one clinical term to use as the primary-index starting point, or enter a different term. Other source evidence remains reference material for later refinement.
+      </p>
+      <p v-if="conversionSummary" class="study-agent-cohort-dialog__conversion-summary">
+        {{ conversionSummary }}
+      </p>
+      <div class="study-agent-cohort-dialog__conversion-options">
+        <button
+          v-for="option in conversionOptions"
+          :key="option.id"
+          type="button"
+          class="study-agent-cohort-dialog__conversion-option"
+          :class="{ 'study-agent-cohort-dialog__conversion-option--selected': selectedConversionOption === option.id }"
+          :disabled="loading"
+          @click="selectedConversionOption = option.id"
+        >
+          <strong>{{ option.label }}</strong>
+          <span>{{ option.detail }}</span>
+        </button>
+        <button
+          type="button"
+          class="study-agent-cohort-dialog__conversion-option"
+          :class="{ 'study-agent-cohort-dialog__conversion-option--selected': selectedConversionOption === 'manual' }"
+          :disabled="loading"
+          @click="selectedConversionOption = 'manual'"
+        >
+          <strong>Enter a different primary index</strong>
+          <span>Use a clinical term you consider a better starting point.</span>
+        </button>
+      </div>
+      <AtlasTextField
+        v-if="selectedConversionOption === 'manual'"
+        v-model="manualConversionTerm"
+        label="Primary-index clinical term"
+        variant="outlined"
+        class="mt-3"
+      />
+      <p v-if="conversionCodeEvidence" class="study-agent-cohort-dialog__conversion-evidence">
+        {{ conversionCodeEvidence }} Source codes and mappings are review evidence only; no concepts have been selected.
+      </p>
+      <div class="study-agent-cohort-dialog__conversion-actions">
+        <AtlasButton
+          :disabled="!selectedConversionTerm || loading"
+          :loading="loading"
+          @click="beginConversionScope"
+        >
+          Continue with selected primary index
+        </AtlasButton>
+        <AtlasButton
+          variant="secondary"
+          :disabled="loading"
+          @click="cancelConversion"
+        >
+          Back to phenotype results
+        </AtlasButton>
+      </div>
+    </section>
+    <AtlasAlert
+      v-if="selectedSourceContext && scopeQuestions.length"
+      severity="info"
+      density="compact"
+      class="mt-3"
+    >
+      Source phenotype reference: {{ selectedSourceContext.phenotype_name }}. Primary-index starting point: {{ selectedSourceContext.primary_index_term }}. This evidence has not selected concepts or added cohort criteria.
+    </AtlasAlert>
+    <section
       v-if="scopeQuestions.length"
       class="study-agent-cohort-dialog__scope"
     >
@@ -699,7 +769,7 @@
         :disabled="!narrative.trim() || loading"
         :loading="loading"
         data-testid="study-agent-cohort-start"
-        @click="run"
+        @click="() => run()"
       >
         {{ primaryActionLabel }}
       </AtlasButton>
@@ -711,7 +781,7 @@
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { AtlasAlert, AtlasButton, AtlasCheckbox, AtlasChip, AtlasDialog, AtlasSelect, AtlasTextField } from '@/components/ui'
-import { createStudyAgentMultiComponentSpecification, getStudyAgentCohortSpecification, importStudyAgentPhenotypeDraft, projectStudyAgentCohortSpecification, reopenStudyAgentCohortSpecificationLogic, requestStudyAgentCohortRecommendations, searchStudyAgentPhenotypeLibrary, startStudyAgentCohortSession, continueStudyAgentMakeComputable, confirmStudyAgentCohortSpecificationLogic } from '@/services/study-agent-cohort-definition.service'
+import { createStudyAgentMultiComponentSpecification, getStudyAgentCohortSpecification, importStudyAgentPhenotypeDraft, projectStudyAgentCohortSpecification, reopenStudyAgentCohortSpecificationLogic, requestStudyAgentCohortRecommendations, searchStudyAgentPhenotypeLibrary, startStudyAgentCohortSession, continueStudyAgentMakeComputable, confirmStudyAgentCohortSpecificationLogic, prepareStudyAgentPhenotypeConversion } from '@/services/study-agent-cohort-definition.service'
 import { setStudyAgentCohortConceptSetHandoff } from '@/stores/study-agent-cohort-concept-set-handoff'
 import type { StudyAgentCohortRoute, StudyAgentCohortSpecification, StudyAgentCohortSpecificationComponent, StudyAgentPhenotypeCandidate } from '@/models/study-agent.types'
 
@@ -731,6 +801,10 @@ const showRankedCandidates = ref(false)
 const showRetrievalCandidates = ref(false)
 const candidateOffset = ref(0)
 const lastSearchedNarrative = ref('')
+const conversionPreparation = ref<Record<string, unknown> | null>(null)
+const selectedConversionOption = ref('')
+const manualConversionTerm = ref('')
+const selectedSourceContext = ref<Record<string, string> | null>(null)
 const scopeQuestions = ref<string[]>([])
 const scope = ref({ indexEvent: '', domain: '', entryLimit: '', priorObservation: null as number | null, indexDayBoundary: '', exitStrategy: '', windowsNone: false, confirmed: false })
 const conceptCandidates = ref<Array<{ concept_id: number; concept_name: string; vocabulary_id: string; domain_id: string; concept_class_id: string; include: boolean; descendants: boolean; mapped: boolean; exclude: boolean }>>([])
@@ -757,6 +831,46 @@ const routes: Array<{ value: StudyAgentCohortRoute; title: string; detail: strin
   { value: 'make_computable', title: 'Create a new computable definition', detail: 'Begin a review-gated narrative-to-Circe workflow.' },
 ]
 function label(value: string) { return value === 'circe_available' ? 'Circe available' : value === 'conversion_required' ? 'Conversion required' : 'Not computable' }
+type ConversionOption = { id: string; label: string; detail: string; suggestedDomain: string }
+function record(value: unknown): Record<string, unknown> { return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {} }
+function text(value: unknown): string { return String(value ?? '').trim() }
+const conversionTitle = computed(() => text(record(record(conversionPreparation.value).presentation).title) || text(record(conversionPreparation.value).phenotype_id))
+const conversionSummary = computed(() => text(record(record(conversionPreparation.value).presentation).plain_language_summary))
+const conversionOptions = computed<ConversionOption[]>(() => {
+  const preparation = record(conversionPreparation.value)
+  const seed = record(preparation.composition_seed)
+  const rawComponents = Array.isArray(seed.components) ? seed.components : []
+  const options = rawComponents
+    .map(record)
+    .filter(component => ['index_exposure', 'primary_index'].includes(text(component.role)) && text(component.label))
+    .map((component, index) => ({
+      id: `seed-${index}`,
+      label: text(component.label),
+      detail: `Suggested from the source phenotype narrative (${text(component.evidence_source) || 'source evidence'}).`,
+      suggestedDomain: text(component.role) === 'index_exposure' ? 'Drug' : '',
+    }))
+  options.push({
+    id: 'source-title',
+    label: conversionTitle.value,
+    detail: 'Use the source phenotype title only as a starting clinical term; confirm the OMOP domain and scope next.',
+    suggestedDomain: '',
+  })
+  return options.filter(option => option.label)
+})
+const selectedConversionTerm = computed(() => selectedConversionOption.value === 'manual'
+  ? manualConversionTerm.value.trim()
+  : conversionOptions.value.find(option => option.id === selectedConversionOption.value)?.label.trim() || '')
+const selectedConversionDomain = computed(() => conversionOptions.value.find(option => option.id === selectedConversionOption.value)?.suggestedDomain || '')
+const conversionCodeEvidence = computed(() => {
+  const readiness = record(record(conversionPreparation.value).readiness)
+  const systems = Array.isArray(readiness.code_systems) ? readiness.code_systems.map(record) : []
+  const details = systems.map(system => {
+    const name = text(system.source_system)
+    const count = Number(system.code_count)
+    return name && Number.isFinite(count) ? `${name} (${count} code${count === 1 ? '' : 's'})` : name
+  }).filter(Boolean)
+  return details.length ? `The source includes ${details.join(', ')}.` : ''
+})
 function sourceLabel(value: string) {
   return value === 'ohdsi_phenotype_library' ? 'OHDSI Phenotype Library'
     : value === 'va_cipher' ? 'VA CIPHER'
@@ -864,10 +978,10 @@ const primaryActionLabel = computed(() => {
   if (route.value !== 'ai_search') return 'Search again'
   return narrative.value.trim() !== lastSearchedNarrative.value ? 'Search updated narrative' : 'Rerun /ohdsi search'
 })
-async function run() {
+async function run(sourceContext: Record<string, unknown> = {}) {
   loading.value = true; error.value = ''; candidates.value = []; rankedCandidates.value = []; retrievalCandidates.value = []; showRankedCandidates.value = false; showRetrievalCandidates.value = false; scopeQuestions.value = []
   try {
-    const session = await startStudyAgentCohortSession(narrative.value.trim(), route.value)
+    const session = await startStudyAgentCohortSession(narrative.value.trim(), route.value, sourceContext)
     sessionId = session.session_id
     if (route.value === 'make_computable') {
       makeComputableSessionStarted.value = true
@@ -1252,27 +1366,63 @@ async function createComputableDraft() {
   } catch (err) { error.value = err instanceof Error ? err.message : 'Unable to create the reviewed cohort draft.' } finally { loading.value = false }
 }
 async function startConversion(candidate: StudyAgentPhenotypeCandidate) {
-  if (convertingId.value) return
+  if (!sessionId || convertingId.value) return
   convertingId.value = candidate.phenotype_id
   error.value = ''
   try {
-    const reference = [
-      `Reference phenotype for review: ${candidate.phenotype_name}.`,
-      candidate.short_description ? `Summary: ${candidate.short_description}` : '',
-      'Use this as evidence only. Build a new computable cohort definition through scope clarification and explicit concept-policy review.',
-    ].filter(Boolean).join(' ')
-    narrative.value = `${narrative.value.trim()}
-
-${reference}`.trim()
-    route.value = 'make_computable'
-    candidates.value = []; rankedCandidates.value = []; retrievalCandidates.value = []
-    showRankedCandidates.value = false; showRetrievalCandidates.value = false
-    await run()
+    const response = await prepareStudyAgentPhenotypeConversion(sessionId, candidate.phenotype_id, {
+      acquisition_route: route.value,
+      phenotype_name: candidate.phenotype_name,
+      study_narrative: narrative.value.trim(),
+    })
+    conversionPreparation.value = response.conversion
+    selectedConversionOption.value = ''
+    manualConversionTerm.value = ''
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Unable to start the computable-definition review.'
+    error.value = err instanceof Error ? err.message : 'Unable to prepare source phenotype evidence for conversion.'
   } finally {
     convertingId.value = null
   }
+}
+function cancelConversion() {
+  conversionPreparation.value = null
+  selectedConversionOption.value = ''
+  manualConversionTerm.value = ''
+  error.value = ''
+}
+async function beginConversionScope() {
+  const primaryTerm = selectedConversionTerm.value
+  if (!primaryTerm || !conversionPreparation.value) return
+  const preparation = record(conversionPreparation.value)
+  const snapshot = record(preparation.source_snapshot)
+  const presentation = record(preparation.presentation)
+  const sourceContext: Record<string, string> = {
+    phenotype_id: text(preparation.phenotype_id),
+    phenotype_name: conversionTitle.value,
+    source_dataset: text(snapshot.source_dataset),
+    source_revision: text(snapshot.source_revision),
+    source_payload_sha256: text(snapshot.source_payload_sha256),
+    primary_index_term: primaryTerm,
+    primary_index_evidence: selectedConversionOption.value === 'manual' ? 'user-entered alternative' : 'selected source-phenotype evidence',
+    source_summary: text(presentation.plain_language_summary),
+  }
+  const reference = [
+    `Reference phenotype for review: ${sourceContext.phenotype_name}.`,
+    `Selected primary-index starting point: ${primaryTerm}.`,
+    sourceContext.source_summary ? `Source summary: ${sourceContext.source_summary}` : '',
+    'This source evidence does not select concepts or add cohort criteria; scope and concept policy still require explicit review.',
+  ].filter(Boolean).join(' ')
+  narrative.value = `${narrative.value.trim()}
+
+${reference}`.trim()
+  scope.value.indexEvent = primaryTerm
+  scope.value.domain = selectedConversionDomain.value
+  selectedSourceContext.value = sourceContext
+  route.value = 'make_computable'
+  candidates.value = []; rankedCandidates.value = []; retrievalCandidates.value = []
+  showRankedCandidates.value = false; showRetrievalCandidates.value = false
+  conversionPreparation.value = null
+  await run(sourceContext)
 }
 
 async function importDraft(candidate: StudyAgentPhenotypeCandidate) {
@@ -1284,7 +1434,7 @@ async function importDraft(candidate: StudyAgentPhenotypeCandidate) {
     await router.push({ path: '/cohorts/new', query: { studyAgentSession: sessionId } })
   } catch (err) { error.value = err instanceof Error ? err.message : 'Unable to open the phenotype draft.' } finally { importingId.value = null }
 }
-function reset() { open.value = false; narrative.value = ''; route.value = 'ai_search'; convertingId.value = null; candidates.value = []; rankedCandidates.value = []; retrievalCandidates.value = []; showRankedCandidates.value = false; showRetrievalCandidates.value = false; candidateOffset.value = 0; lastSearchedNarrative.value = ''; conceptCandidates.value = []; cohortSpecification.value = null; makeComputableSessionStarted.value = false; lastCandidateRequestIndexEvent.value = ''; componentPlanning.value = false; componentPlanCreated.value = false; components.value = []; logicRelationships.value = {}; supportingWindows.value = {}; logicExitType.value = 'observation'; logicExitAnchor.value = 'endDate'; logicExitOffset.value = null; supportingOperator.value = 'ALL'; logicBindingsConfirmed.value = false; logicConfirmed.value = false; scopeQuestions.value = []; showPolicyConfirmation.value = false; scope.value = { indexEvent: '', domain: '', entryLimit: '', priorObservation: null, indexDayBoundary: '', exitStrategy: '', windowsNone: false, confirmed: false }; error.value = ''; sessionId = '' }
+function reset() { open.value = false; narrative.value = ''; route.value = 'ai_search'; convertingId.value = null; conversionPreparation.value = null; selectedConversionOption.value = ''; manualConversionTerm.value = ''; selectedSourceContext.value = null; candidates.value = []; rankedCandidates.value = []; retrievalCandidates.value = []; showRankedCandidates.value = false; showRetrievalCandidates.value = false; candidateOffset.value = 0; lastSearchedNarrative.value = ''; conceptCandidates.value = []; cohortSpecification.value = null; makeComputableSessionStarted.value = false; lastCandidateRequestIndexEvent.value = ''; componentPlanning.value = false; componentPlanCreated.value = false; components.value = []; logicRelationships.value = {}; supportingWindows.value = {}; logicExitType.value = 'observation'; logicExitAnchor.value = 'endDate'; logicExitOffset.value = null; supportingOperator.value = 'ALL'; logicBindingsConfirmed.value = false; logicConfirmed.value = false; scopeQuestions.value = []; showPolicyConfirmation.value = false; scope.value = { indexEvent: '', domain: '', entryLimit: '', priorObservation: null, indexDayBoundary: '', exitStrategy: '', windowsNone: false, confirmed: false }; error.value = ''; sessionId = '' }
 watch(
   () => [open.value, props.resumeSessionId] as const,
   async ([isOpen, resumeSessionId]) => {
@@ -1302,6 +1452,13 @@ watch(
 .study-agent-cohort-dialog__route--selected { border-color: rgb(var(--v-theme-primary)); box-shadow: inset 0 0 0 1px rgb(var(--v-theme-primary)); background: rgba(var(--v-theme-primary), .06); }
 .study-agent-cohort-dialog__route span { font-size: 13px; color: rgb(var(--v-theme-on-surface-variant)); }
 .study-agent-cohort-dialog__results, .study-agent-cohort-dialog__scope, .study-agent-cohort-dialog__building-blocks { margin-top: 20px; }
+.study-agent-cohort-dialog__conversion { margin-top: 20px; padding: 14px; border: 1px solid rgb(var(--v-theme-outline-variant)); border-radius: 8px; }
+.study-agent-cohort-dialog__conversion-summary, .study-agent-cohort-dialog__conversion-evidence { color: rgb(var(--v-theme-on-surface-variant)); }
+.study-agent-cohort-dialog__conversion-options { display: grid; gap: 8px; margin-top: 12px; }
+.study-agent-cohort-dialog__conversion-option { display: grid; gap: 3px; width: 100%; padding: 10px 12px; text-align: left; color: inherit; background: transparent; border: 1px solid var(--atlas-color-outline); border-radius: 6px; cursor: pointer; }
+.study-agent-cohort-dialog__conversion-option span { color: rgb(var(--v-theme-on-surface-variant)); font-size: .875rem; }
+.study-agent-cohort-dialog__conversion-option--selected { border-color: rgb(var(--v-theme-primary)); box-shadow: inset 0 0 0 1px rgb(var(--v-theme-primary)); background: rgba(var(--v-theme-primary), .06); }
+.study-agent-cohort-dialog__conversion-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
 .study-agent-cohort-dialog__scope { padding: 14px; border-left: 3px solid rgb(var(--v-theme-primary)); background: rgba(var(--v-theme-primary), .05); }
 .study-agent-cohort-dialog__building-blocks, .study-agent-cohort-dialog__logic-review, .study-agent-cohort-dialog__projection { padding: 14px; border: 1px solid rgb(var(--v-theme-outline-variant)); border-radius: 8px; }
 .study-agent-cohort-dialog__logic-review { margin-top: 20px; }

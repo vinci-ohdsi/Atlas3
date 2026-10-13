@@ -64,10 +64,14 @@
         :model-value="conceptSetsStore.editorOpen"
         :concept-set="conceptSetsStore.currentSet"
         :cohort-handoff="activeCohortHandoff ?? undefined"
+        :external-review-session-id="activeExternalReviewSessionId ?? undefined"
+        :external-review="activeExternalReview ?? undefined"
         @update:model-value="
           value => {
             if (!value) {
               activeCohortHandoff = null
+              activeExternalReviewSessionId = null
+              activeExternalReview = null
               conceptSetsStore.closeEditor()
             }
           }
@@ -92,14 +96,20 @@ import { useWebAPIStore } from '@/stores/webapi'
 import { getSourceKey as getDefaultSourceKey } from '@/config/webapi'
 import { getStudyAgentCohortConceptSetHandoff, type StudyAgentCohortConceptSetHandoff } from '@/stores/study-agent-cohort-concept-set-handoff'
 import { useStudyAgentConceptSetStore } from '@/stores/study-agent-concept-set'
+import { getStudyAgentExternalReviewStatus, type StudyAgentExternalReviewContext } from '@/services/study-agent-concept-set.service'
+import { useNotifications } from '@/stores/notifications'
 
 const route = useRoute()
 const router = useRouter()
 const conceptSetsStore = useConceptSetsStore()
 const webapiStore = useWebAPIStore()
 const studyAgentStore = useStudyAgentConceptSetStore()
+const notify = useNotifications()
 let openedCohortHandoffKey = ''
+let openedExternalReviewKey = ''
 const activeCohortHandoff = ref<StudyAgentCohortConceptSetHandoff | null>(null)
+const activeExternalReviewSessionId = ref<string | null>(null)
+const activeExternalReview = ref<StudyAgentExternalReviewContext | null>(null)
 const { t } = useI18n()
 
 const pageTitle = computed(() => t('cs.browser.caption', 'Concepts').value)
@@ -137,6 +147,36 @@ function handoffQuery(name: string) {
 const hasCohortHandoff = computed(() => Boolean(
   handoffQuery('cohortStudyAgentSession') && handoffQuery('cohortConceptSetSlot'),
 ))
+const hasExternalReviewHandoff = computed(() => Boolean(
+  handoffQuery('studyAgentExternalReviewSession') && handoffQuery('conceptSetId'),
+))
+
+async function openExternalReviewWorkbench() {
+  const sessionId = handoffQuery('studyAgentExternalReviewSession')
+  const conceptSetId = handoffQuery('conceptSetId')
+  if (!sessionId || !conceptSetId) return
+  const handoffKey = `${sessionId}:${conceptSetId}`
+  if (openedExternalReviewKey === handoffKey && conceptSetsStore.editorOpen) return
+  try {
+    const status = await getStudyAgentExternalReviewStatus(sessionId)
+    if (String(status.concept_set_id) !== conceptSetId) {
+      throw new Error('The requested Atlas concept set does not match this review request.')
+    }
+    activeCohortHandoff.value = null
+    activeExternalReviewSessionId.value = status.state === 'external_review_pending' ? sessionId : null
+    activeExternalReview.value = status.external_review ?? null
+    activeTab.value = 'sets'
+    await conceptSetsStore.openEditEditor(conceptSetId)
+    openedExternalReviewKey = handoffKey
+    if (status.state === 'external_review_accepted') {
+      notify.info('This R review was already accepted. R will use the recorded snapshot, not later concept-set edits.')
+    }
+  } catch (error) {
+    notify.danger('Unable to open the R concept-set review.', {
+      message: error instanceof Error ? error.message : undefined,
+    })
+  }
+}
 
 async function openCohortHandoffWorkbench() {
   const sessionId = handoffQuery('cohortStudyAgentSession')
@@ -149,6 +189,7 @@ async function openCohortHandoffWorkbench() {
   const handoffKey = `${sessionId}:${slotId}`
   if (openedCohortHandoffKey === handoffKey && conceptSetsStore.editorOpen) return
   activeCohortHandoff.value = { cohortSessionId: sessionId, slotId, label, domain, criterionRole }
+  activeExternalReview.value = null
   activeTab.value = 'sets'
   studyAgentStore.queueNarrative(
     `Create a reusable ${domain} concept set for the cohort building block “${label}”. `
@@ -162,6 +203,8 @@ async function openCohortHandoffWorkbench() {
 
 async function onEditorSave() {
   activeCohortHandoff.value = null
+  activeExternalReviewSessionId.value = null
+  activeExternalReview.value = null
   await conceptSetsStore.fetchAll()
 }
 
@@ -187,15 +230,21 @@ watch(
 // This page can remain mounted under the host shell. Read session storage at
 // route-transition time rather than capturing an old handoff at component mount.
 watch(
-  () => [route.query.cohortStudyAgentSession, route.query.cohortConceptSetSlot] as const,
-  async () => { await openCohortHandoffWorkbench() },
+  () => [route.query.cohortStudyAgentSession, route.query.cohortConceptSetSlot, route.query.studyAgentExternalReviewSession, route.query.conceptSetId] as const,
+  async () => {
+    if (hasExternalReviewHandoff.value) await openExternalReviewWorkbench()
+    else await openCohortHandoffWorkbench()
+  },
   { immediate: true, flush: 'post' },
 )
 
 onMounted(() => {
   // The host shell may update the hash after Vue's first route watcher. Retry
   // once from the concrete browser URL; the action is idempotent.
-  window.setTimeout(() => { void openCohortHandoffWorkbench() }, 0)
+  window.setTimeout(() => {
+    if (hasExternalReviewHandoff.value) void openExternalReviewWorkbench()
+    else void openCohortHandoffWorkbench()
+  }, 0)
 })
 
 </script>

@@ -8,6 +8,24 @@
       </p>
     </div>
 
+    <AtlasAlert
+      v-if="externalReviewContext"
+      severity="info"
+      class="mb-4"
+    >
+      <strong>R workflow review context</strong>
+      <p>
+        This concept set was opened from an R phenotype workflow for
+        <strong>{{ externalReviewContext.roleLabel }}</strong> evidence.
+        The R scope is background for this dialogue; it has not selected concepts or started an AI request.
+      </p>
+      <p v-if="externalReviewContext.indexTerm">
+        Index term: <strong>{{ externalReviewContext.indexTerm }}</strong>
+        <template v-if="externalReviewContext.domain"> · Domain: {{ externalReviewContext.domain }}</template>
+        <template v-if="externalReviewContext.vocabulary"> · Vocabulary: {{ externalReviewContext.vocabulary }}</template>
+      </p>
+    </AtlasAlert>
+
     <template v-if="!hasSession">
       <AtlasAlert
         v-if="priorProvenance?.available && priorProvenance.provenance"
@@ -404,6 +422,7 @@ interface Props {
   conceptSetId?: number | string
   sourceKey?: string
   expressionSummary?: Record<string, unknown>
+  externalReview?: Record<string, unknown>
 }
 
 const props = defineProps<Props>()
@@ -428,6 +447,31 @@ const stagedForReviewRevision = ref<number | null>(null)
 const proposalDomains = ['Condition', 'Drug', 'Procedure', 'Measurement', 'Observation', 'Visit', 'Device']
 const canSubmit = computed(() => !!narrative.value.trim())
 const hasSession = computed(() => !!assistant.session?.session_id)
+function externalReviewText(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+function externalReviewCriterion(scope: Record<string, unknown>, key: 'criterion_domains' | 'criterion_vocabularies', indexTerm: string): string {
+  const criteria = scope[key]
+  if (!criteria || typeof criteria !== 'object' || Array.isArray(criteria)) return ''
+  const values = criteria as Record<string, unknown>
+  const value = values[indexTerm] ?? Object.values(values)[0]
+  if (Array.isArray(value)) return externalReviewText(value[0])
+  return externalReviewText(value)
+}
+const externalReviewContext = computed(() => {
+  const review = props.externalReview
+  if (!review) return null
+  const scope = review.scope && typeof review.scope === 'object' && !Array.isArray(review.scope)
+    ? review.scope as Record<string, unknown>
+    : {}
+  const indexTerm = externalReviewText(scope.index_event)
+  return {
+    roleLabel: externalReviewText(review.role_label).replace(/_/g, ' ') || 'cohort criterion',
+    indexTerm,
+    domain: externalReviewCriterion(scope, 'criterion_domains', indexTerm),
+    vocabulary: externalReviewCriterion(scope, 'criterion_vocabularies', indexTerm),
+  }
+})
 watch(
   () => [props.active, props.mode, props.conceptSetId] as const,
   async ([active, mode, conceptSetId]) => {
@@ -564,6 +608,7 @@ async function submit() {
         mode: props.mode,
         ...(props.conceptSetId !== undefined ? { concept_set_id: props.conceptSetId } : {}),
         ...(props.sourceKey ? { source_key: props.sourceKey } : {}),
+        ...(props.externalReview ? { external_review: props.externalReview } : {}),
         interaction_profile: atlasConceptSetInteractionProfile,
       },
     })
@@ -588,6 +633,7 @@ async function reply() {
         mode: props.mode,
         ...(props.conceptSetId !== undefined ? { concept_set_id: props.conceptSetId } : {}),
         ...(props.sourceKey ? { source_key: props.sourceKey } : {}),
+        ...(props.externalReview ? { external_review: props.externalReview } : {}),
         expression_summary: props.expressionSummary ?? { selected_item_count: 0, selected_items: [] },
       },
     })
