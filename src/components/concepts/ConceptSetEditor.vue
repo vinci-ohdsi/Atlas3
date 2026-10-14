@@ -188,10 +188,21 @@
                 Search begins with the supplied clinical term and scope; no concepts or policy have been added.
               </p>
               <dl>
-                <template v-if="externalReviewContext.roleLabel"><dt>Criterion role</dt><dd>{{ externalReviewContext.roleLabel }}</dd></template>
-                <template v-if="externalReviewContext.indexTerm"><dt>Index term</dt><dd>{{ externalReviewContext.indexTerm }}</dd></template>
-                <template v-if="externalReviewContext.domain"><dt>Domain</dt><dd>{{ externalReviewContext.domain }}</dd></template>
-                <template v-if="externalReviewContext.vocabulary"><dt>Vocabulary</dt><dd>{{ externalReviewContext.vocabulary }}</dd></template>
+                <template v-if="externalReviewContext.roleLabel">
+                  <dt>Cohort role</dt><dd>{{ externalReviewContext.roleLabel }}</dd>
+                </template>
+                <template v-if="externalReviewContext.purpose">
+                  <dt>Reviewing</dt><dd>{{ externalReviewContext.purpose }}</dd>
+                </template>
+                <template v-if="externalReviewContext.indexTerm">
+                  <dt>Clinical term</dt><dd>{{ externalReviewContext.indexTerm }}</dd>
+                </template>
+                <template v-if="externalReviewContext.domain">
+                  <dt>Domain</dt><dd>{{ externalReviewContext.domain }}</dd>
+                </template>
+                <template v-if="externalReviewContext.vocabulary">
+                  <dt>Vocabulary</dt><dd>{{ externalReviewContext.vocabulary }}</dd>
+                </template>
               </dl>
             </section>
             <!-- Tabs rail: same shared treatment as the outer page tabs. -->
@@ -914,8 +925,12 @@ const externalReviewContext = computed(() => {
     ? review.scope as Record<string, unknown>
     : {}
   const indexTerm = externalReviewText(scope.index_event)
+  const reviewLane = review.review_lane && typeof review.review_lane === 'object' && !Array.isArray(review.review_lane)
+    ? review.review_lane as Record<string, unknown>
+    : {}
   return {
     roleLabel: externalReviewText(review.role_label).replace(/_/g, ' '),
+    purpose: externalReviewText(reviewLane.purpose),
     indexTerm,
     domain: externalReviewCriterion(scope, 'criterion_domains', indexTerm),
     vocabulary: externalReviewCriterion(scope, 'criterion_vocabularies', indexTerm),
@@ -1300,6 +1315,13 @@ async function onSave() {
     // so a newly added tag would never be assigned.
     const tagsBeforeSave = [...loadedTags.value]
     const tagsToPersist = [...selectedTags.value]
+    // The persisted WebAPI concept-set expression contains policy flags and IDs
+    // only. Retain the editor's resolved domain metadata for an external R
+    // review so WebAPI can reject a set that does not match its declared lane.
+    const externalReviewItemDomains = (store.currentSet?.items ?? []).map(item => ({
+      concept_id: item.conceptId,
+      domain: item.domainId,
+    }))
 
     if (isEditMode.value && props.conceptSet?.id) {
       result = await store.update({
@@ -1320,7 +1342,11 @@ async function onSave() {
         if (studyAgentStore.appliedReviewRevision !== null) {
           await studyAgentStore.finalizeSavedConceptSet(savedId)
         } else if (props.externalReviewSessionId) {
-          const externalReview = await finalizeStudyAgentExternalReview(props.externalReviewSessionId, savedId)
+          const externalReview = await finalizeStudyAgentExternalReview(
+            props.externalReviewSessionId,
+            savedId,
+            externalReviewItemDomains,
+          )
           notify.success('Atlas review snapshot accepted. Return to R to resume the phenotype workflow.')
           logger.info('ConceptSetEditor', 'Finalized external Study Agent review', {
             sessionId: externalReview.session_id,

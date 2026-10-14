@@ -84,6 +84,12 @@ export interface StudyAgentExternalReviewStatus {
     workflow_id?: string
     role_label?: string
     candidate_count?: number
+    review_lane?: {
+      key?: string
+      term?: string
+      purpose?: string
+      expected_domain?: string
+    }
     scope?: Record<string, unknown>
     candidate_summary?: Record<string, unknown>
   }
@@ -97,13 +103,19 @@ export function getStudyAgentExternalReviewStatus(sessionId: string): Promise<St
   )
 }
 
+export interface StudyAgentExternalReviewItemDomain {
+  concept_id: number
+  domain: string
+}
+
 export function finalizeStudyAgentExternalReview(
   sessionId: string,
   conceptSetId: number | string,
+  reviewedItemDomains: StudyAgentExternalReviewItemDomain[],
 ): Promise<StudyAgentExternalReviewStatus> {
   return httpPost<StudyAgentExternalReviewStatus>(
     `/study-agent/v1/concept-set-sessions/external-review/${encodeURIComponent(sessionId)}/finalize?conceptSetId=${encodeURIComponent(String(conceptSetId))}`,
-    {},
+    { reviewed_item_domains: reviewedItemDomains },
   )
 }
 
