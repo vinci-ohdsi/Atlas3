@@ -34,6 +34,21 @@
       </AtlasButton>
     </div>
 
+    <div
+      v-if="isExternalRStudyAgentDraft && !props.id"
+      class="cohort-builder__r-draft-banner"
+      aria-label="R validated cohort draft"
+    >
+      <AtlasIcon
+        icon="mdi-language-r"
+        size="18"
+      />
+      <div>
+        <strong>Validated R cohort draft</strong>
+        <p>This is a copy of the validated R definition. Review or edit it normally, then save to create an Atlas cohort definition. Saving here does not change the R workflow.</p>
+      </div>
+    </div>
+
     <CohortGenerationSection
       v-if="!loadError"
       :cohort-id="cohortId"
@@ -534,6 +549,7 @@ const emit = defineEmits<{
 
 const router = useRouter()
 const route = useRoute()
+const isExternalRStudyAgentDraft = computed(() => !props.id && route.query.studyAgentExternalR === 'true')
 const cohortStore = useCohortStore()
 const conceptSetsStore = useConceptSetsStore()
 const webapiStore = useWebAPIStore()
@@ -2481,6 +2497,27 @@ defineExpose({
 
 .cohort-builder__study-agent-provenance dd {
   margin: 2px 0 0;
+}
+
+.cohort-builder__r-draft-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 8px 0 16px;
+  padding: 12px 14px;
+  border-left: 4px solid rgb(var(--v-theme-primary));
+  background: rgb(var(--v-theme-surface-variant));
+  color: rgb(var(--v-theme-on-surface-variant));
+}
+
+.cohort-builder__r-draft-banner strong,
+.cohort-builder__r-draft-banner p {
+  display: block;
+  margin: 0;
+}
+
+.cohort-builder__r-draft-banner p {
+  margin-top: 2px;
 }
 
 .cohort-builder__preview-banner {
