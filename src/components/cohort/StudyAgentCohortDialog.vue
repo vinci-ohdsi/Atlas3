@@ -55,7 +55,10 @@
       <p>
         <strong>{{ conversionTitle }}</strong> is reference evidence, not an executable cohort definition. Choose one clinical term to use as the primary-index starting point, or enter a different term. Other source evidence remains reference material for later refinement.
       </p>
-      <p v-if="conversionSummary" class="study-agent-cohort-dialog__conversion-summary">
+      <p
+        v-if="conversionSummary"
+        class="study-agent-cohort-dialog__conversion-summary"
+      >
         {{ conversionSummary }}
       </p>
       <div class="study-agent-cohort-dialog__conversion-options">
@@ -89,7 +92,10 @@
         variant="outlined"
         class="mt-3"
       />
-      <p v-if="conversionCodeEvidence" class="study-agent-cohort-dialog__conversion-evidence">
+      <p
+        v-if="conversionCodeEvidence"
+        class="study-agent-cohort-dialog__conversion-evidence"
+      >
         {{ conversionCodeEvidence }} Source codes and mappings are review evidence only; no concepts have been selected.
       </p>
       <div class="study-agent-cohort-dialog__conversion-actions">
@@ -217,6 +223,16 @@
           >
             No local candidates matched the previous index term. Enter a more vocabulary-aligned clinical term, then retry candidate review.
           </p>
+          <AtlasButton
+            v-if="needsCandidateRetrieval && primaryIndexSlotId"
+            class="mt-2"
+            variant="secondary"
+            size="sm"
+            :disabled="loading"
+            @click="openConceptSetWorkbench(primaryIndexSlotId)"
+          >
+            Review concept set in Atlas
+          </AtlasButton>
         </div>
         <AtlasSelect
           v-model="scope.domain"
@@ -340,11 +356,16 @@
       </AtlasButton>
     </section>
     <section
-      v-if="cohortSpecification && scope.confirmed && !needsCandidateRetrieval"
+      v-if="cohortSpecification && scope.confirmed"
       class="study-agent-cohort-dialog__building-blocks"
     >
       <h3>Cohort building blocks</h3>
-      <p>These link reusable concept-set assets to cohort criteria. They are not yet a saved cohort definition.</p>
+      <p v-if="needsCandidateRetrieval">
+        No local candidates were returned for the requested term. Open the primary concept-set review to search the normal Atlas vocabulary. Nothing is selected automatically.
+      </p>
+      <p v-else>
+        These link reusable concept-set assets to cohort criteria. They are not yet a saved cohort definition.
+      </p>
       <article
         v-for="slot in cohortSpecification.concept_set_slots"
         :key="slot.slot_id"
@@ -1186,6 +1207,9 @@ async function openConceptSetWorkbench(slotId: string) {
     label: slot.label || 'Cohort concept set',
     domain: binding.domain,
     criterionRole: binding.criterion_role,
+    searchTerm: scope.value.indexEvent.trim() || slot.label || '',
+    sourcePhenotypeName: selectedSourceContext.value?.phenotype_name,
+    sourceSummary: selectedSourceContext.value?.source_summary,
   })
   open.value = false
   await router.push({ path: '/concepts', query: { tab: 'sets', cohortStudyAgentSession: sessionId, cohortConceptSetSlot: slotId, cohortConceptSetLabel: slot.label || 'Cohort concept set', cohortConceptSetDomain: binding.domain, cohortCriterionRole: binding.criterion_role } })
@@ -1328,6 +1352,10 @@ function setExcludePolicy(candidate: { include: boolean; exclude: boolean; desce
 }
 const canRequestCandidateReview = computed(() => scope.value.confirmed && scope.value.windowsNone && !!scope.value.indexEvent.trim() && !!scope.value.domain && !!scope.value.entryLimit && scope.value.priorObservation !== null && !!scope.value.indexDayBoundary && !!scope.value.exitStrategy && (!needsCandidateRetrieval.value || indexEventChangedSinceCandidateRequest.value))
 const needsCandidateRetrieval = computed(() => cohortSpecification.value?.state === 'needs_candidate_retrieval' && !conceptCandidates.value.length)
+const primaryIndexSlotId = computed(() => {
+  const slotId = cohortSpecification.value?.criterion_bindings.find(binding => binding.criterion_role === 'primary_index')?.concept_set_slot_id
+  return slotId && cohortSpecification.value?.concept_set_slots.some(slot => slot.slot_id === slotId) ? slotId : ''
+})
 const indexEventChangedSinceCandidateRequest = computed(() => scope.value.indexEvent.trim() !== lastCandidateRequestIndexEvent.value)
 const candidateReviewActionLabel = computed(() => {
   if (!needsCandidateRetrieval.value) return 'Request candidate review'

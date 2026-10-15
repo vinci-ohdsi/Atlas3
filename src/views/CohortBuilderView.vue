@@ -11,6 +11,7 @@
         class="cohort-builder-view__title-input"
         :placeholder="placeholder"
         :aria-label="t('columns.name', 'Cohort name').value"
+        maxlength="255"
         @input="onTitleInput"
       >
     </template>

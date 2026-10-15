@@ -188,7 +188,7 @@ async function openCohortHandoffWorkbench() {
   const criterionRole = handoffQuery('cohortCriterionRole') || stored?.criterionRole || 'cohort criterion'
   const handoffKey = `${sessionId}:${slotId}`
   if (openedCohortHandoffKey === handoffKey && conceptSetsStore.editorOpen) return
-  activeCohortHandoff.value = { cohortSessionId: sessionId, slotId, label, domain, criterionRole }
+  activeCohortHandoff.value = { cohortSessionId: sessionId, slotId, label, domain, criterionRole, searchTerm: stored?.searchTerm, sourcePhenotypeName: stored?.sourcePhenotypeName, sourceSummary: stored?.sourceSummary }
   activeExternalReview.value = null
   activeTab.value = 'sets'
   studyAgentStore.queueNarrative(

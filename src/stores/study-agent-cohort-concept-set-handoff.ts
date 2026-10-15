@@ -9,6 +9,11 @@ export interface StudyAgentCohortConceptSetHandoff {
   label: string
   domain: string
   criterionRole: string
+  /** Scoped clinical term to prefill in the normal Atlas vocabulary search. */
+  searchTerm?: string
+  /** Source phenotype context shown only as reviewer evidence. */
+  sourcePhenotypeName?: string
+  sourceSummary?: string
 }
 
 const STORAGE_KEY = 'study-agent-cohort-concept-set-handoff'
@@ -29,6 +34,9 @@ export function getStudyAgentCohortConceptSetHandoff(): StudyAgentCohortConceptS
       label: value.label,
       domain: value.domain,
       criterionRole: value.criterionRole,
+      searchTerm: typeof value.searchTerm === 'string' ? value.searchTerm : undefined,
+      sourcePhenotypeName: typeof value.sourcePhenotypeName === 'string' ? value.sourcePhenotypeName : undefined,
+      sourceSummary: typeof value.sourceSummary === 'string' ? value.sourceSummary : undefined,
     }
   } catch {
     return null

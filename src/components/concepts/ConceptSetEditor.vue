@@ -205,6 +205,27 @@
                 </template>
               </dl>
             </section>
+            <section
+              v-else-if="props.cohortHandoff"
+              class="cs-editor__external-review"
+            >
+              <strong>Continue cohort concept-set review</strong>
+              <p>
+                No local candidates were returned for this cohort building block.
+                The normal Atlas search is prefilled with the requested clinical term; review and select policy deliberately before saving.
+              </p>
+              <dl>
+                <dt>Building block</dt><dd>{{ props.cohortHandoff.label }}</dd>
+                <dt>Domain</dt><dd>{{ props.cohortHandoff.domain }}</dd>
+                <dt>Role</dt><dd>{{ props.cohortHandoff.criterionRole.replace(/_/g, ' ') }}</dd>
+                <template v-if="props.cohortHandoff.sourcePhenotypeName">
+                  <dt>Source phenotype evidence</dt><dd>{{ props.cohortHandoff.sourcePhenotypeName }}</dd>
+                </template>
+                <template v-if="props.cohortHandoff.sourceSummary">
+                  <dt>Source summary</dt><dd>{{ props.cohortHandoff.sourceSummary }}</dd>
+                </template>
+              </dl>
+            </section>
             <!-- Tabs rail: same shared treatment as the outer page tabs. -->
             <nav class="page-tabs-rail cs-editor__tabs-rail">
               <AtlasTabs
@@ -364,7 +385,7 @@
                 <!-- Search Tab -->
                 <v-window-item value="search">
                   <ConceptSearchInline
-                    :initial-search="externalReviewSearchPrefill"
+                    :initial-search="conceptSearchPrefill"
                     @add-concept="onAddConcept"
                     @add-concepts="onAddConcepts"
                     @remove-concept="onRemoveConcept"
@@ -941,6 +962,15 @@ const externalReviewSearchPrefill = computed(() => {
   if (!context?.indexTerm) return undefined
   return { term: context.indexTerm, domain: context.domain, vocabulary: context.vocabulary }
 })
+const cohortHandoffSearchPrefill = computed(() => {
+  const handoff = props.cohortHandoff
+  const term = String(handoff?.searchTerm || handoff?.label || '').trim()
+  if (!term) return undefined
+  return { term, domain: handoff?.domain || '' }
+})
+const conceptSearchPrefill = computed(() =>
+  externalReviewSearchPrefill.value || cohortHandoffSearchPrefill.value,
+)
 
 // ============================================================================
 // Local State
