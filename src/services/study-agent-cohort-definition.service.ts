@@ -3,6 +3,20 @@ import type { StudyAgentCohortCritique, StudyAgentCohortDraft, StudyAgentCohortR
 
 const BASE = '/study-agent/v1/cohort-definition-sessions'
 
+export interface StudyAgentLandingDialogue {
+  plan?: string
+  answer?: string
+  current_step_guidance?: string[]
+  cautions?: string[]
+  suggested_next_actions?: string[]
+  follow_up_plan?: string[]
+}
+
+/** Advisory-only landing request. WebAPI, not the browser, owns the ACP boundary. */
+export function askStudyAgentLandingDialogue(message: string): Promise<{ dialogue: StudyAgentLandingDialogue }> {
+  return httpPost<{ dialogue: StudyAgentLandingDialogue }>('/study-agent/v1/atlas-assistant/dialogue', { message })
+}
+
 export function startStudyAgentCohortSession(narrative: string, route: StudyAgentCohortRoute, sourceContext: Record<string, unknown> = {}): Promise<StudyAgentCohortSession> {
   return httpPost<StudyAgentCohortSession>(BASE, { narrative, route, source_context: sourceContext })
 }

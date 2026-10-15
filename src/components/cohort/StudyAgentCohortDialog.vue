@@ -39,6 +39,26 @@
     >
       {{ error }}
     </AtlasAlert>
+    <details
+      v-if="hasInitialLandingContext"
+      class="study-agent-cohort-dialog__landing-context"
+    >
+      <summary>Working /ohdsi context</summary>
+      <p v-if="initialLandingPlan">
+        <strong>{{ initialLandingPlan }}</strong>
+      </p>
+      <p v-if="initialLandingAnswer">
+        {{ initialLandingAnswer }}
+      </p>
+      <ul v-if="initialLandingCautions.length">
+        <li
+          v-for="item in initialLandingCautions"
+          :key="item"
+        >
+          {{ item }}
+        </li>
+      </ul>
+    </details>
     <AtlasAlert
       v-if="route === 'make_computable'"
       severity="info"
@@ -120,8 +140,8 @@
       class="study-agent-cohort-dialog__authoring-dialogue"
     >
       <summary>
-        <strong>Ask /ohdsi about this authoring step</strong>
-        <span>Optional, advisory guidance</span>
+        <strong>{{ authoringDialogueTitle }}</strong>
+        <span>Optional, advisory guidance that continues this cohort-definition task</span>
       </summary>
       <div class="study-agent-cohort-dialog__authoring-dialogue-body">
         <p>Guidance is advisory only. It does not select concepts, change scope, create a cohort, or save anything. Do not include patient-level information.</p>
@@ -878,7 +898,7 @@ import { setStudyAgentCohortConceptSetHandoff } from '@/stores/study-agent-cohor
 import type { StudyAgentCohortRefinementDialogue, StudyAgentCohortRoute, StudyAgentCohortSpecification, StudyAgentCohortSpecificationComponent, StudyAgentPhenotypeCandidate } from '@/models/study-agent.types'
 
 const open = defineModel<boolean>({ required: true })
-const props = withDefaults(defineProps<{ resumeSessionId?: string }>(), { resumeSessionId: '' })
+const props = withDefaults(defineProps<{ resumeSessionId?: string; initialNarrative?: string; initialRoute?: StudyAgentCohortRoute; initialLandingContext?: Record<string, unknown> | null }>(), { resumeSessionId: '', initialNarrative: '', initialRoute: 'ai_search', initialLandingContext: null })
 const router = useRouter()
 const narrative = ref('')
 const route = ref<StudyAgentCohortRoute>('ai_search')
@@ -920,6 +940,12 @@ const supportingOperator = ref<'ALL' | 'ANY'>('ALL')
 const logicBindingsConfirmed = ref(false)
 const logicConfirmed = ref(false)
 const domains = ['Condition', 'Drug', 'Procedure', 'Measurement', 'Observation', 'Visit', 'Device']
+const initialLandingPlan = computed(() => text(props.initialLandingContext?.plan))
+const initialLandingAnswer = computed(() => text(props.initialLandingContext?.answer))
+const initialLandingCautions = computed(() => Array.isArray(props.initialLandingContext?.cautions)
+  ? props.initialLandingContext.cautions.map(text).filter(Boolean)
+  : [])
+const hasInitialLandingContext = computed(() => Boolean(initialLandingPlan.value || initialLandingAnswer.value || initialLandingCautions.value.length))
 let sessionId = ''
 const routes: Array<{ value: StudyAgentCohortRoute; title: string; detail: string }> = [
   { value: 'ai_search', title: 'AI-supported search', detail: 'Rank likely existing phenotype definitions for review.' },
@@ -957,16 +983,23 @@ const selectedConversionTerm = computed(() => selectedConversionOption.value ===
   ? manualConversionTerm.value.trim()
   : conversionOptions.value.find(option => option.id === selectedConversionOption.value)?.label.trim() || '')
 const selectedConversionDomain = computed(() => conversionOptions.value.find(option => option.id === selectedConversionOption.value)?.suggestedDomain || '')
+const visiblePhenotypeCandidates = computed(() => [...candidates.value, ...rankedCandidates.value, ...retrievalCandidates.value]
+  .filter((candidate, index, all) => all.findIndex(other => other.phenotype_id === candidate.phenotype_id) === index)
+  .slice(0, 10))
 const showAuthoringDialogue = computed(() => Boolean(
   conversionPreparation.value
+  || visiblePhenotypeCandidates.value.length
   || (makeComputableSessionStarted.value && (scopeQuestions.value.length || conceptCandidates.value.length || cohortSpecification.value)),
 ))
 const authoringDialogueStage = computed(() => {
   if (conversionPreparation.value) return 'phenotype_review'
   if (needsLogicReview.value) return 'logic_review'
-  if (conceptCandidates.value.length) return 'candidate_review'
+  if (conceptCandidates.value.length || visiblePhenotypeCandidates.value.length) return 'candidate_review'
   return 'scope_clarification'
 })
+const authoringDialogueTitle = computed(() => authoringDialogueStage.value === 'candidate_review'
+  ? 'Ask /ohdsi about these phenotype options'
+  : 'Ask /ohdsi about this authoring step')
 const authoringDialogueActions = computed(() => {
   const dialogue = authoringDialogue.value
   if (!dialogue) return []
@@ -1102,7 +1135,10 @@ const primaryActionLabel = computed(() => {
 async function run(sourceContext: Record<string, unknown> = {}) {
   loading.value = true; error.value = ''; candidates.value = []; rankedCandidates.value = []; retrievalCandidates.value = []; showRankedCandidates.value = false; showRetrievalCandidates.value = false; scopeQuestions.value = []
   try {
-    const session = await startStudyAgentCohortSession(narrative.value.trim(), route.value, sourceContext)
+    const context = hasInitialLandingContext.value
+      ? { landing_assistant_context: props.initialLandingContext, ...sourceContext }
+      : sourceContext
+    const session = await startStudyAgentCohortSession(narrative.value.trim(), route.value, context)
     sessionId = session.session_id
     if (route.value === 'make_computable') {
       makeComputableSessionStarted.value = true
@@ -1506,7 +1542,15 @@ async function askAuthoringDialogue() {
         phenotype_id: text(record(conversionPreparation.value).phenotype_id),
         phenotype_name: conversionTitle.value,
       } : {}),
-      bounded_candidate_count: conceptCandidates.value.length,
+      active_acquisition_route: route.value,
+      bounded_candidate_count: conceptCandidates.value.length || visiblePhenotypeCandidates.value.length,
+      visible_candidate_summaries: visiblePhenotypeCandidates.value.map(candidate => ({
+        phenotype_id: candidate.phenotype_id,
+        phenotype_name: candidate.phenotype_name,
+        source_dataset: candidate.source_dataset,
+        computability_status: candidate.computability_status,
+        short_description: candidate.short_description?.slice(0, 240),
+      })),
       has_reviewed_cohort_plan: Boolean(cohortSpecification.value),
     })
     authoringDialogue.value = response.dialogue
@@ -1589,9 +1633,17 @@ async function importDraft(candidate: StudyAgentPhenotypeCandidate) {
 }
 function reset() { open.value = false; narrative.value = ''; route.value = 'ai_search'; convertingId.value = null; conversionPreparation.value = null; selectedConversionOption.value = ''; manualConversionTerm.value = ''; selectedSourceContext.value = null; authoringDialogueMessage.value = ''; authoringDialogue.value = null; authoringDialogueLoading.value = false; authoringDialogueError.value = ''; candidates.value = []; rankedCandidates.value = []; retrievalCandidates.value = []; showRankedCandidates.value = false; showRetrievalCandidates.value = false; candidateOffset.value = 0; lastSearchedNarrative.value = ''; conceptCandidates.value = []; cohortSpecification.value = null; makeComputableSessionStarted.value = false; lastCandidateRequestIndexEvent.value = ''; componentPlanning.value = false; componentPlanCreated.value = false; components.value = []; logicRelationships.value = {}; supportingWindows.value = {}; logicExitType.value = 'observation'; logicExitAnchor.value = 'endDate'; logicExitOffset.value = null; supportingOperator.value = 'ALL'; logicBindingsConfirmed.value = false; logicConfirmed.value = false; scopeQuestions.value = []; showPolicyConfirmation.value = false; scope.value = { indexEvent: '', domain: '', entryLimit: '', priorObservation: null, indexDayBoundary: '', exitStrategy: '', windowsNone: false, confirmed: false }; error.value = ''; sessionId = '' }
 watch(
-  () => [open.value, props.resumeSessionId] as const,
+  () => [open.value, props.resumeSessionId, props.initialNarrative] as const,
   async ([isOpen, resumeSessionId]) => {
-    if (isOpen && resumeSessionId) await resumeCohortSpecification(resumeSessionId)
+    if (!isOpen) return
+    if (resumeSessionId) {
+      await resumeCohortSpecification(resumeSessionId)
+      return
+    }
+    if (props.initialNarrative.trim() && !narrative.value.trim()) {
+      narrative.value = props.initialNarrative.trim()
+      route.value = props.initialRoute
+    }
   },
   { immediate: true },
 )
@@ -1600,6 +1652,10 @@ watch(
 
 <style scoped>
 .study-agent-cohort-dialog__hint { margin: 0 0 16px; color: rgb(var(--v-theme-on-surface-variant)); }
+.study-agent-cohort-dialog__landing-context { margin-top: 16px; padding: 12px 14px; border: 1px solid rgb(var(--v-theme-outline-variant)); border-radius: 8px; background: rgba(var(--v-theme-primary), .03); }
+.study-agent-cohort-dialog__landing-context summary { cursor: pointer; font-weight: 600; }
+.study-agent-cohort-dialog__landing-context p { margin: 10px 0 0; }
+.study-agent-cohort-dialog__landing-context ul { margin: 10px 0 0; padding-left: 20px; }
 .study-agent-cohort-dialog__routes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
 .study-agent-cohort-dialog__route { text-align: left; border: 1px solid var(--atlas-color-outline); border-radius: 6px; padding: 14px; color: inherit; background: transparent; cursor: pointer; display: grid; gap: 6px; }
 .study-agent-cohort-dialog__route--selected { border-color: rgb(var(--v-theme-primary)); box-shadow: inset 0 0 0 1px rgb(var(--v-theme-primary)); background: rgba(var(--v-theme-primary), .06); }

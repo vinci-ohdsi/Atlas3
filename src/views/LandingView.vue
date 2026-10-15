@@ -32,6 +32,14 @@
             >
               {{ t('home.gettingStarted.vocabulary.button', 'Search the vocabulary') }}
             </AtlasButton>
+            <AtlasButton
+              variant="secondary"
+              size="lg"
+              icon="mdi-robot-outline"
+              @click="handleStudyAgent"
+            >
+              /ohdsi
+            </AtlasButton>
           </div>
         </div>
         <div class="landing__illustration">
@@ -43,6 +51,8 @@
         </div>
       </div>
     </v-card>
+
+    <StudyAgentLandingDialog v-model="showStudyAgentLandingDialog" />
 
     <div class="landing__features">
       <AtlasCard
@@ -102,6 +112,7 @@ import { useRouter } from 'vue-router'
 import { useI18n } from '@/composables/useI18n'
 import atlasLogo from '@/assets/icons/atlas-loading.svg'
 import { AtlasButton, AtlasCard, AtlasIcon } from '@/components/ui'
+import StudyAgentLandingDialog from '@/components/cohort/StudyAgentLandingDialog.vue'
 import { pluginConfigService } from '@/services/PluginConfigService'
 
 interface FeatureTile {
@@ -157,6 +168,12 @@ const handleSearchConcepts = () => {
 
 const handleNewCohort = () => {
   router.push('/cohorts/new')
+}
+
+const showStudyAgentLandingDialog = ref(false)
+
+const handleStudyAgent = () => {
+  showStudyAgentLandingDialog.value = true
 }
 
 const customLandingLogoUrl = ref<string | null>(null)

@@ -320,7 +320,10 @@
       <StudyAgentCohortDialog
         v-model="showStudyAgentCohortDialog"
         :resume-session-id="resumeStudyAgentSession"
-        @update:model-value="value => { if (!value) resumeStudyAgentSession = '' }"
+        :initial-narrative="studyAgentInitialNarrative"
+        :initial-route="studyAgentInitialRoute"
+        :initial-landing-context="studyAgentInitialLandingContext"
+        @update:model-value="value => { if (!value) { resumeStudyAgentSession = ''; studyAgentInitialNarrative = ''; studyAgentInitialRoute = 'ai_search'; studyAgentInitialLandingContext = null } }"
       />
 
       <!-- Delete Confirmation Dialog -->
@@ -466,7 +469,7 @@ import CohortPagination from '@/components/cohort/CohortPagination.vue'
 import CohortFilters from '@/components/cohort/CohortFilters.vue'
 import StudyAgentCohortDialog from '@/components/cohort/StudyAgentCohortDialog.vue'
 import type { CohortDefinitionSummary } from '@/models/webapi.types'
-import type { StudyAgentCohortPlanSummary } from '@/models/study-agent.types'
+import type { StudyAgentCohortPlanSummary, StudyAgentCohortRoute } from '@/models/study-agent.types'
 import { archiveStudyAgentCohortPlan, listStudyAgentCohortPlans } from '@/services/study-agent-cohort-definition.service'
 
 const router = useRouter()
@@ -499,6 +502,9 @@ const showDeleteDialog = ref(false)
 const showNewCohortDialog = ref(false)
 const showStudyAgentCohortDialog = ref(false)
 const resumeStudyAgentSession = ref('')
+const studyAgentInitialNarrative = ref('')
+const studyAgentInitialRoute = ref<StudyAgentCohortRoute>('ai_search')
+const studyAgentInitialLandingContext = ref<Record<string, unknown> | null>(null)
 const studyAgentPlans = ref<StudyAgentCohortPlanSummary[]>([])
 const archiveCandidate = ref<StudyAgentCohortPlanSummary | null>(null)
 const archivingPlan = ref(false)
@@ -525,6 +531,46 @@ function resumeStudyAgentPlan(selectedSessionId = '') {
   if (!sessionId) return
   resumeStudyAgentSession.value = sessionId
   showStudyAgentCohortDialog.value = true
+}
+
+function startStudyAgentFromHome() {
+  const launchedFromHome = route.query.studyAgentStart === '1'
+    || window.sessionStorage.getItem('study-agent-home-launch') === '1'
+  if (!launchedFromHome) return
+
+  // Consume the marker before opening the modal so a later refresh does not
+  // reopen authoring after the user has deliberately closed it.
+  window.sessionStorage.removeItem('study-agent-home-launch')
+  const routeNarrative = typeof route.query.studyAgentNarrative === 'string'
+    ? route.query.studyAgentNarrative.trim()
+    : ''
+  const initialNarrative = routeNarrative || (window.sessionStorage.getItem('study-agent-home-narrative') ?? '')
+  const routeValue = typeof route.query.studyAgentRoute === 'string' ? route.query.studyAgentRoute : ''
+  const initialRoute: StudyAgentCohortRoute = ['ai_search', 'library', 'make_computable'].includes(routeValue)
+    ? routeValue as StudyAgentCohortRoute
+    : 'ai_search'
+  const serializedContext = window.sessionStorage.getItem('study-agent-home-context')
+  let initialContext: Record<string, unknown> | null = null
+  try {
+    const parsed = serializedContext ? JSON.parse(serializedContext) : null
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) initialContext = parsed as Record<string, unknown>
+  } catch { /* malformed browser state is safely ignored */ }
+  window.sessionStorage.removeItem('study-agent-home-narrative')
+  window.sessionStorage.removeItem('study-agent-home-context')
+  // The route watcher and mounted callback can both observe the same launch
+  // while router.replace is pending. Never replace a captured narrative with
+  // the later empty read.
+  if (initialNarrative.trim()) studyAgentInitialNarrative.value = initialNarrative
+  studyAgentInitialRoute.value = initialRoute
+  studyAgentInitialLandingContext.value = initialContext
+  showStudyAgentCohortDialog.value = true
+  if (route.query.studyAgentStart === '1') {
+    const query = { ...route.query }
+    delete query.studyAgentStart
+    delete query.studyAgentNarrative
+    delete query.studyAgentRoute
+    void router.replace({ query })
+  }
 }
 
 async function archiveStudyAgentPlan() {
@@ -565,6 +611,12 @@ async function loadStudyAgentPlans() {
 }
 
 watch(
+  () => route.query.studyAgentStart,
+  startStudyAgentFromHome,
+  { immediate: true, flush: 'post' },
+)
+
+watch(
   () => route.query.studyAgentCohortSession,
   () => {
     const sessionId = routeSessionId()
@@ -576,7 +628,10 @@ watch(
 )
 
 onMounted(() => {
-  window.setTimeout(resumeStudyAgentPlan, 0)
+  window.setTimeout(() => {
+    startStudyAgentFromHome()
+    resumeStudyAgentPlan()
+  }, 0)
 })
 
 // Import-cohort state
