@@ -14,6 +14,11 @@ export interface StudyAgentCohortConceptSetHandoff {
   /** Source phenotype context shown only as reviewer evidence. */
   sourcePhenotypeName?: string
   sourceSummary?: string
+  /** Compact, advisory context from the cohort-authoring task. */
+  cohortNarrative?: string
+  landingPlan?: string
+  landingAnswer?: string
+  advisorySummary?: string
 }
 
 const STORAGE_KEY = 'study-agent-cohort-concept-set-handoff'
@@ -37,6 +42,10 @@ export function getStudyAgentCohortConceptSetHandoff(): StudyAgentCohortConceptS
       searchTerm: typeof value.searchTerm === 'string' ? value.searchTerm : undefined,
       sourcePhenotypeName: typeof value.sourcePhenotypeName === 'string' ? value.sourcePhenotypeName : undefined,
       sourceSummary: typeof value.sourceSummary === 'string' ? value.sourceSummary : undefined,
+      cohortNarrative: typeof value.cohortNarrative === 'string' ? value.cohortNarrative : undefined,
+      landingPlan: typeof value.landingPlan === 'string' ? value.landingPlan : undefined,
+      landingAnswer: typeof value.landingAnswer === 'string' ? value.landingAnswer : undefined,
+      advisorySummary: typeof value.advisorySummary === 'string' ? value.advisorySummary : undefined,
     }
   } catch {
     return null

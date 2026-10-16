@@ -21,10 +21,68 @@
       </p>
       <p v-if="externalReviewContext.indexTerm">
         Index term: <strong>{{ externalReviewContext.indexTerm }}</strong>
-        <template v-if="externalReviewContext.domain"> · Domain: {{ externalReviewContext.domain }}</template>
-        <template v-if="externalReviewContext.vocabulary"> · Vocabulary: {{ externalReviewContext.vocabulary }}</template>
+        <template v-if="externalReviewContext.domain">
+          · Domain: {{ externalReviewContext.domain }}
+        </template>
+        <template v-if="externalReviewContext.vocabulary">
+          · Vocabulary: {{ externalReviewContext.vocabulary }}
+        </template>
       </p>
     </AtlasAlert>
+
+    <AtlasAlert
+      v-else-if="props.cohortHandoff"
+      severity="info"
+      class="mb-4"
+    >
+      <strong>Continue cohort-definition task</strong>
+      <p>
+        You are curating the <strong>{{ props.cohortHandoff.label }}</strong> building block for
+        <strong>{{ props.cohortHandoff.cohortNarrative || props.cohortHandoff.searchTerm }}</strong>.
+        This context is advisory; it has not selected concepts or policy.
+      </p>
+      <p>
+        Clinical term: <strong>{{ props.cohortHandoff.searchTerm }}</strong>
+        <template v-if="props.cohortHandoff.domain">
+          · Domain: {{ props.cohortHandoff.domain }}
+        </template>
+      </p>
+    </AtlasAlert>
+
+    <AtlasAlert
+      v-else-if="props.cohortAuthoringContext"
+      severity="info"
+      class="mb-4"
+    >
+      <strong>Continue cohort-definition task</strong>
+      <p>
+        This concept set supports a criterion being added in the normal Atlas cohort editor for
+        <strong>{{ props.cohortAuthoringContext.narrative || 'the current cohort task' }}</strong>.
+      </p>
+      <p>
+        Its policy and the cohort logic remain user-authored; /ohdsi guidance is advisory and does not validate or add either one.
+      </p>
+    </AtlasAlert>
+
+    <details
+      v-if="props.cohortHandoff?.landingPlan || props.cohortHandoff?.landingAnswer || props.cohortHandoff?.advisorySummary"
+      class="study-agent-concept-set-tab__cohort-considerations"
+      open
+    >
+      <summary>Current considerations</summary>
+      <p v-if="props.cohortHandoff.landingPlan">
+        <strong>{{ props.cohortHandoff.landingPlan }}</strong>
+      </p>
+      <p v-if="props.cohortHandoff.landingAnswer">
+        {{ props.cohortHandoff.landingAnswer }}
+      </p>
+      <p v-if="props.cohortHandoff.advisorySummary">
+        {{ props.cohortHandoff.advisorySummary }}
+      </p>
+      <p class="study-agent-concept-set-tab__advisory-note">
+        This is prior /ohdsi guidance, not a confirmed cohort decision.
+      </p>
+    </details>
 
     <template v-if="!hasSession">
       <AtlasAlert
@@ -44,16 +102,33 @@
           Start a new /ohdsi dialogue to refine this saved expression; the prior goal is provided as background, not as an active instruction.
         </p>
       </AtlasAlert>
-      <AtlasTextField
-        v-model="narrative"
-        label="Concept-set goal"
-        placeholder="For example: help me find standard RxNorm concepts for bolus insulin"
-        :disabled="assistant.loading"
-        multiline
-        :rows="4"
-        variant="outlined"
-        hide-details
-      />
+      <div
+        ref="initialQuestionPanel"
+        :class="{ 'study-agent-concept-set-tab__question-focus': questionFlash }"
+      >
+        <AtlasTextField
+          v-if="props.focusQuestion"
+          v-model="initialQuestion"
+          label="Question for /ohdsi"
+          placeholder="For example: What should I include or exclude for this primary index concept set?"
+          :disabled="assistant.loading"
+          multiline
+          :rows="3"
+          variant="outlined"
+          hide-details
+        />
+        <AtlasTextField
+          v-else
+          v-model="narrative"
+          label="Concept-set goal"
+          placeholder="For example: help me find standard RxNorm concepts for bolus insulin"
+          :disabled="assistant.loading"
+          multiline
+          :rows="4"
+          variant="outlined"
+          hide-details
+        />
+      </div>
 
       <div class="study-agent-concept-set-tab__actions">
         <AtlasButton
@@ -61,7 +136,7 @@
           :loading="assistant.loading"
           @click="submit"
         >
-          Start /ohdsi
+          /ohdsi
         </AtlasButton>
       </div>
     </template>
@@ -133,10 +208,11 @@
       v-if="showComposer"
       ref="composerPanel"
       class="study-agent-concept-set-tab__follow-up"
+      :class="{ 'study-agent-concept-set-tab__question-focus': questionFlash }"
     >
       <AtlasTextField
         v-model="followUp"
-        :label="proposalAppliedForReview ? 'Ask /ohdsi about this review' : 'Continue /ohdsi dialogue'"
+        :label="hasCohortTaskContext ? 'Ask /ohdsi a follow-up' : (proposalAppliedForReview ? 'Ask /ohdsi about this review' : 'Continue /ohdsi dialogue')"
         :placeholder="proposalAppliedForReview
           ? 'For example: I reviewed Included and want to exclude these concepts.'
           : 'For example: include clinical drugs and exclude products containing protamine.'"
@@ -166,7 +242,7 @@
       </div>
     </div>
     <div
-      v-if="proposalActionAvailable || (!proposalAppliedForReview && assistant.proposal)"
+      v-if="!hasCohortTaskContext && (proposalActionAvailable || (!proposalAppliedForReview && assistant.proposal))"
       class="study-agent-concept-set-tab__follow-up"
     >
       <AtlasCombobox
@@ -414,7 +490,9 @@ import ConceptTable from '@/components/concepts/ConceptTable.vue'
 import type { Concept } from '@/models/concept-set.types'
 import { useStudyAgentConceptSetStore } from '@/stores/study-agent-concept-set'
 import { atlasConceptSetInteractionProfile } from '@/models/study-agent.types'
+import type { StudyAgentCohortEditorContext } from '@/models/study-agent.types'
 import { getStudyAgentConceptSetProvenance, type StudyAgentConceptSetProvenance } from '@/services/study-agent-concept-set.service'
+import type { StudyAgentCohortConceptSetHandoff } from '@/stores/study-agent-cohort-concept-set-handoff'
 
 interface Props {
   active: boolean
@@ -423,18 +501,26 @@ interface Props {
   sourceKey?: string
   expressionSummary?: Record<string, unknown>
   externalReview?: Record<string, unknown>
+  cohortHandoff?: StudyAgentCohortConceptSetHandoff
+  cohortAuthoringContext?: StudyAgentCohortEditorContext
+  focusQuestion?: boolean
+  focusRequestId?: number
 }
 
 const props = defineProps<Props>()
 const emit = defineEmits<{ proposalApplied: [expression: unknown] }>()
 const assistant = useStudyAgentConceptSetStore()
 const narrative = ref('')
+const initialQuestion = ref('')
 const followUp = ref('')
 const answers = ref<Record<string, string>>({})
 const proposalDomain = ref('')
 const proposalAppliedForReview = ref(false)
 const showDialogueComposer = ref(false)
 const composerPanel = ref<HTMLElement | null>(null)
+const initialQuestionPanel = ref<HTMLElement | null>(null)
+const questionFlash = ref(false)
+let questionFlashTimer: ReturnType<typeof setTimeout> | undefined
 const priorProvenance = ref<StudyAgentConceptSetProvenance | null>(null)
 const showPolicyWorkbench = ref(false)
 const selectedCandidateIds = ref<number[]>([])
@@ -445,7 +531,7 @@ const stagedRationale = ref('')
 const stagedPolicies = ref<Record<number, { concept_id: number; is_excluded: boolean; include_descendants: boolean; include_mapped: boolean; rationale: string }>>({})
 const stagedForReviewRevision = ref<number | null>(null)
 const proposalDomains = ['Condition', 'Drug', 'Procedure', 'Measurement', 'Observation', 'Visit', 'Device']
-const canSubmit = computed(() => !!narrative.value.trim())
+const canSubmit = computed(() => !!(props.focusQuestion ? initialQuestion.value : narrative.value).trim())
 const hasSession = computed(() => !!assistant.session?.session_id)
 function externalReviewText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
@@ -472,6 +558,64 @@ const externalReviewContext = computed(() => {
     vocabulary: externalReviewCriterion(scope, 'criterion_vocabularies', indexTerm),
   }
 })
+const hasCohortTaskContext = computed(() => Boolean(props.cohortHandoff || props.cohortAuthoringContext))
+const cohortHandoffContext = computed(() => {
+  if (props.cohortHandoff) {
+    return {
+      cohort_narrative: props.cohortHandoff.cohortNarrative,
+      current_component: props.cohortHandoff.label,
+      criterion_role: props.cohortHandoff.criterionRole,
+      domain: props.cohortHandoff.domain,
+      clinical_term: props.cohortHandoff.searchTerm,
+      landing_plan: props.cohortHandoff.landingPlan,
+      landing_answer: props.cohortHandoff.landingAnswer,
+      advisory_summary: props.cohortHandoff.advisorySummary,
+    }
+  }
+  if (props.cohortAuthoringContext) {
+    return {
+      cohort_narrative: props.cohortAuthoringContext.narrative,
+      current_component: 'a criterion in the normal Atlas cohort editor',
+      authoring_session_id: props.cohortAuthoringContext.session_id,
+      specification_state: props.cohortAuthoringContext.specification_state,
+      projection: props.cohortAuthoringContext.projection,
+      boundary: props.cohortAuthoringContext.boundary,
+    }
+  }
+  return undefined
+})
+watch(
+  () => props.cohortAuthoringContext,
+  context => {
+    if (!context || narrative.value.trim()) return
+    narrative.value = `Help me curate a concept set for a criterion being added to ${context.narrative || 'the current cohort-definition task'}.`
+  },
+  { immediate: true },
+)
+watch(
+  () => props.cohortHandoff,
+  handoff => {
+    if (!handoff || narrative.value.trim()) return
+    narrative.value = `Help me curate the ${handoff.criterionRole.replace(/_/g, ' ')} concept set for ${handoff.cohortNarrative || handoff.searchTerm || handoff.label}.`
+  },
+  { immediate: true },
+)
+watch(
+  () => [props.active, props.focusQuestion, props.focusRequestId] as const,
+  async ([active, focusQuestion]) => {
+    if (!active || !focusQuestion) return
+    await nextTick()
+    if (hasSession.value) {
+      await showDialogueComposerForFollowUp()
+      return
+    }
+    questionFlash.value = true
+    if (questionFlashTimer) clearTimeout(questionFlashTimer)
+    questionFlashTimer = setTimeout(() => { questionFlash.value = false }, 1800)
+    const input = initialQuestionPanel.value?.querySelector('textarea, input') as HTMLInputElement | HTMLTextAreaElement | null
+    input?.focus()
+  },
+)
 watch(
   () => [props.active, props.mode, props.conceptSetId] as const,
   async ([active, mode, conceptSetId]) => {
@@ -488,7 +632,7 @@ const canRequestProposal = computed(() => canReply.value && !(dialogue.value?.qu
 const proposalActionAvailable = computed(() => canRequestProposal.value && !assistant.proposal && !proposalAppliedForReview.value)
 const proposalReviewAvailable = computed(() => !!assistant.proposal && !proposalAppliedForReview.value)
 const showComposer = computed(() => canReply.value && !dialogue.value?.questions?.length && (
-  showDialogueComposer.value || (!proposalActionAvailable.value && !proposalReviewAvailable.value)
+  hasCohortTaskContext.value || showDialogueComposer.value || (!proposalActionAvailable.value && !proposalReviewAvailable.value)
 ))
 const proposalData = computed(() => assistant.proposal as Record<string, unknown> | null)
 const proposalCandidates = computed(() => Array.isArray(proposalData.value?.candidates) ? proposalData.value.candidates as Array<Record<string, unknown>> : [])
@@ -585,10 +729,28 @@ const canContinue = computed(() => !!followUp.value.trim() || hasStructuredAnswe
 
 async function showDialogueComposerForFollowUp() {
   showDialogueComposer.value = true
-  await nextTick()
-  composerPanel.value?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  const input = composerPanel.value?.querySelector('textarea, input') as HTMLInputElement | HTMLTextAreaElement | null
-  input?.focus()
+  questionFlash.value = true
+  if (questionFlashTimer) clearTimeout(questionFlashTimer)
+  questionFlashTimer = setTimeout(() => { questionFlash.value = false }, 1800)
+
+  // A v-window may keep a prior tab mounted but hidden while the active tab
+  // transitions. Retry for a few animation frames and focus only an input that
+  // is actually visible, rather than the first textarea retained in the DOM.
+  for (let attempt = 0; attempt < 24; attempt += 1) {
+    await nextTick()
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+    const panel = composerPanel.value
+    const input = Array.from(panel?.querySelectorAll('textarea, input') ?? [])
+      .find((element): element is HTMLInputElement | HTMLTextAreaElement =>
+        element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement
+          ? element.getClientRects().length > 0 && !element.disabled
+          : false,
+      )
+    if (!panel || panel.getClientRects().length === 0 || !input) continue
+    panel.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    input.focus({ preventScroll: true })
+    return
+  }
 }
 
 function hideDialogueComposer() {
@@ -598,10 +760,11 @@ function hideDialogueComposer() {
 
 async function submit() {
   if (!canSubmit.value) return
+  const message = (props.focusQuestion ? initialQuestion.value : narrative.value).trim()
   try {
     await assistant.start({
       command: '/ohdsi',
-      message: narrative.value.trim(),
+      message,
       ui_context: {
         route: 'concepts',
         tab: 'concept-set-editor',
@@ -609,6 +772,7 @@ async function submit() {
         ...(props.conceptSetId !== undefined ? { concept_set_id: props.conceptSetId } : {}),
         ...(props.sourceKey ? { source_key: props.sourceKey } : {}),
         ...(props.externalReview ? { external_review: props.externalReview } : {}),
+        ...(cohortHandoffContext.value ? { cohort_workflow: cohortHandoffContext.value } : {}),
         interaction_profile: atlasConceptSetInteractionProfile,
       },
     })
@@ -634,6 +798,7 @@ async function reply() {
         ...(props.conceptSetId !== undefined ? { concept_set_id: props.conceptSetId } : {}),
         ...(props.sourceKey ? { source_key: props.sourceKey } : {}),
         ...(props.externalReview ? { external_review: props.externalReview } : {}),
+        ...(cohortHandoffContext.value ? { cohort_workflow: cohortHandoffContext.value } : {}),
         expression_summary: props.expressionSummary ?? { selected_item_count: 0, selected_items: [] },
       },
     })
@@ -748,6 +913,12 @@ watch(
 .study-agent-concept-set-tab__intro h2, .study-agent-concept-set-tab__response h3, .study-agent-concept-set-tab__transcript h3 { color: rgb(var(--v-theme-primary)); }
 .study-agent-concept-set-tab__intro p { color: rgb(var(--v-theme-on-surface-variant)); }
 .study-agent-concept-set-tab__actions { margin-top: 16px; }
+.study-agent-concept-set-tab__cohort-considerations { margin: 12px 0; padding: 10px 12px; border: 1px solid rgb(var(--v-theme-outline-variant)); border-radius: 4px; background: rgb(var(--v-theme-surface-variant)); }
+.study-agent-concept-set-tab__cohort-considerations summary { cursor: pointer; font-weight: 600; }
+.study-agent-concept-set-tab__cohort-considerations p { margin: 8px 0 0; white-space: pre-wrap; }
+.study-agent-concept-set-tab__advisory-note { color: rgb(var(--v-theme-on-surface-variant)); font-size: 0.9rem; }
+.study-agent-concept-set-tab__question-focus { animation: study-agent-question-highlight 1.8s ease-out; border-radius: 4px; }
+@keyframes study-agent-question-highlight { 0% { box-shadow: 0 0 0 3px rgba(var(--v-theme-primary), .35); } 100% { box-shadow: 0 0 0 0 rgba(var(--v-theme-primary), 0); } }
 .study-agent-concept-set-tab__goal { margin-top: 20px; padding: 12px 16px; border-radius: 4px; background: rgb(var(--v-theme-surface-variant)); }
 .study-agent-concept-set-tab__transcript { margin-top: 24px; }
 .study-agent-concept-set-tab__transcript-entry { margin-top: 12px; padding: 12px 16px; border-left: 3px solid rgb(var(--v-theme-primary)); background: rgb(var(--v-theme-surface-variant)); }

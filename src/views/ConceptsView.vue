@@ -77,6 +77,7 @@
           }
         "
         @save="onEditorSave"
+        @save-and-continue="onEditorSaveAndContinue"
         @delete="onEditorDelete"
       />
     </div>
@@ -95,7 +96,6 @@ import { useConceptSetsStore } from '@/stores/concept-sets'
 import { useWebAPIStore } from '@/stores/webapi'
 import { getSourceKey as getDefaultSourceKey } from '@/config/webapi'
 import { getStudyAgentCohortConceptSetHandoff, type StudyAgentCohortConceptSetHandoff } from '@/stores/study-agent-cohort-concept-set-handoff'
-import { useStudyAgentConceptSetStore } from '@/stores/study-agent-concept-set'
 import { getStudyAgentExternalReviewStatus, type StudyAgentExternalReviewContext } from '@/services/study-agent-concept-set.service'
 import { useNotifications } from '@/stores/notifications'
 
@@ -103,7 +103,6 @@ const route = useRoute()
 const router = useRouter()
 const conceptSetsStore = useConceptSetsStore()
 const webapiStore = useWebAPIStore()
-const studyAgentStore = useStudyAgentConceptSetStore()
 const notify = useNotifications()
 let openedCohortHandoffKey = ''
 let openedExternalReviewKey = ''
@@ -188,14 +187,22 @@ async function openCohortHandoffWorkbench() {
   const criterionRole = handoffQuery('cohortCriterionRole') || stored?.criterionRole || 'cohort criterion'
   const handoffKey = `${sessionId}:${slotId}`
   if (openedCohortHandoffKey === handoffKey && conceptSetsStore.editorOpen) return
-  activeCohortHandoff.value = { cohortSessionId: sessionId, slotId, label, domain, criterionRole, searchTerm: stored?.searchTerm, sourcePhenotypeName: stored?.sourcePhenotypeName, sourceSummary: stored?.sourceSummary }
+  activeCohortHandoff.value = {
+    cohortSessionId: sessionId,
+    slotId,
+    label,
+    domain,
+    criterionRole,
+    searchTerm: stored?.searchTerm,
+    sourcePhenotypeName: stored?.sourcePhenotypeName,
+    sourceSummary: stored?.sourceSummary,
+    cohortNarrative: stored?.cohortNarrative,
+    landingPlan: stored?.landingPlan,
+    landingAnswer: stored?.landingAnswer,
+    advisorySummary: stored?.advisorySummary,
+  }
   activeExternalReview.value = null
   activeTab.value = 'sets'
-  studyAgentStore.queueNarrative(
-    `Create a reusable ${domain} concept set for the cohort building block “${label}”. `
-    + `It will be used as ${criterionRole.replace(/_/g, ' ')} evidence. `
-    + 'Review terminology policy only; cohort timing and Boolean logic stay in the cohort definition.',
-  )
   conceptSetsStore.openCreateEditor()
   await nextTick()
   openedCohortHandoffKey = handoffKey
@@ -205,6 +212,13 @@ async function onEditorSave() {
   activeCohortHandoff.value = null
   activeExternalReviewSessionId.value = null
   activeExternalReview.value = null
+  await conceptSetsStore.fetchAll()
+}
+
+async function onEditorSaveAndContinue() {
+  // Preserve the cohort handoff and open editor. The concept set is now a
+  // durable reusable asset, but the user deliberately chose to keep curating
+  // before returning to the cohort scope task.
   await conceptSetsStore.fetchAll()
 }
 

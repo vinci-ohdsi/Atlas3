@@ -150,19 +150,36 @@
                 {{ t('common.cancel', 'Cancel') }}
               </AtlasButton>
 
+              <DisabledReasonTooltip
+                v-if="!embedded && props.cohortHandoff"
+                :reason="saveDisabledReason"
+              >
+                <AtlasButton
+                  variant="secondary"
+                  :disabled="!formValid || loading || !canSubmit"
+                  :loading="loading"
+                  data-testid="cs-editor-save-return-btn"
+                  @click="onSave(true)"
+                >
+                  Save and return to cohort
+                </AtlasButton>
+              </DisabledReasonTooltip>
+
               <DisabledReasonTooltip :reason="saveDisabledReason">
                 <AtlasButton
                   :disabled="!formValid || loading || !canSubmit"
                   :loading="loading"
                   data-testid="cs-editor-primary-btn"
-                  @click="embedded ? onApply() : onSave()"
+                  @click="embedded ? onApply() : onSave(props.cohortHandoff ? false : true)"
                 >
                   {{
                     embedded
                       ? t('common.apply', 'Apply')
-                      : isEditMode
-                        ? t('common.save', 'Save')
-                        : t('common.create', 'Create')
+                      : props.cohortHandoff
+                        ? 'Save and keep editing'
+                        : isEditMode
+                          ? t('common.save', 'Save')
+                          : t('common.create', 'Create')
                   }}
                 </AtlasButton>
               </DisabledReasonTooltip>
@@ -211,8 +228,9 @@
             >
               <strong>Continue cohort concept-set review</strong>
               <p>
-                No local candidates were returned for this cohort building block.
-                The normal Atlas search is prefilled with the requested clinical term; review and select policy deliberately before saving.
+                The normal Atlas search is prefilled with the requested clinical term and domain.
+                Search, review, and select policy deliberately before saving; any local candidate suggestions are optional and are not a complete concept set.
+                Saving gives you a choice: keep curating this concept set here, or return to cohort scope editing.
               </p>
               <dl>
                 <dt>Building block</dt><dd>{{ props.cohortHandoff.label }}</dd>
@@ -225,6 +243,68 @@
                   <dt>Source summary</dt><dd>{{ props.cohortHandoff.sourceSummary }}</dd>
                 </template>
               </dl>
+              <div class="cs-editor__cohort-handoff-actions">
+                <AtlasButton
+                  size="sm"
+                  @click="openCohortAssistant(true)"
+                >
+                  Ask /ohdsi
+                </AtlasButton>
+                <AtlasButton
+                  size="sm"
+                  variant="secondary"
+                  @click="openCohortAssistant(false)"
+                >
+                  View current considerations
+                </AtlasButton>
+                <AtlasButton
+                  v-if="activeTab === 'assistant'"
+                  size="sm"
+                  variant="secondary"
+                  @click="returnFromCohortAssistant"
+                >
+                  Back to previous view
+                </AtlasButton>
+              </div>
+            </section>
+            <section
+              v-else-if="props.cohortAuthoringContext"
+              class="cs-editor__external-review"
+            >
+              <strong>Continue cohort-definition task</strong>
+              <p>
+                This concept set supports a criterion you are adding in the normal Atlas cohort editor.
+                Search and set policy deliberately. It is not automatically included in the earlier validated projection.
+              </p>
+              <dl>
+                <dt>Cohort task</dt><dd>{{ props.cohortAuthoringContext.narrative || 'Current /ohdsi cohort authoring task' }}</dd>
+                <template v-if="props.cohortAuthoringContext.specification_state">
+                  <dt>Starting plan state</dt><dd>{{ props.cohortAuthoringContext.specification_state.replace(/_/g, ' ') }}</dd>
+                </template>
+              </dl>
+              <div class="cs-editor__cohort-handoff-actions">
+                <AtlasButton
+                  size="sm"
+                  @click="openCohortAssistant(true)"
+                >
+                  Ask /ohdsi
+                </AtlasButton>
+                <AtlasButton
+                  size="sm"
+                  variant="secondary"
+                  @click="openCohortAssistant(false)"
+                >
+                  View task context
+                </AtlasButton>
+                <AtlasButton
+                  v-if="activeTab === 'assistant'"
+                  size="sm"
+                  variant="secondary"
+                  @click="returnFromCohortAssistant"
+                >
+                  Back to previous view
+                </AtlasButton>
+              </div>
             </section>
             <!-- Tabs rail: same shared treatment as the outer page tabs. -->
             <nav class="page-tabs-rail cs-editor__tabs-rail">
@@ -402,6 +482,10 @@
                     :source-key="sourceKey"
                     :expression-summary="studyAgentExpressionSummary"
                     :external-review="props.externalReview"
+                    :cohort-handoff="props.cohortHandoff"
+                    :cohort-authoring-context="props.cohortAuthoringContext"
+                    :focus-question="assistantQuestionRequested"
+                    :focus-request-id="assistantFocusRequestId"
                     @proposal-applied="onStudyAgentProposalApplied"
                   />
                 </v-window-item>
@@ -809,6 +893,7 @@ import { useStudyAgentConceptSetStore } from '@/stores/study-agent-concept-set'
 import { finalizeStudyAgentExternalReview, getStudyAgentConceptSetProvenance } from '@/services/study-agent-concept-set.service'
 import type { StudyAgentExternalReviewContext } from '@/services/study-agent-concept-set.service'
 import { attachStudyAgentCohortConceptSetSnapshot } from '@/services/study-agent-cohort-definition.service'
+import type { StudyAgentCohortEditorContext } from '@/models/study-agent.types'
 import { clearStudyAgentCohortConceptSetHandoff, type StudyAgentCohortConceptSetHandoff } from '@/stores/study-agent-cohort-concept-set-handoff'
 import {
   parsePastedIds,
@@ -893,6 +978,8 @@ interface Props {
   embedded?: boolean
   /** Present only when this drawer was explicitly opened for a cohort block. */
   cohortHandoff?: StudyAgentCohortConceptSetHandoff
+  /** Advisory continuation from the normal Atlas cohort editor; it never attaches or validates a slot. */
+  cohortAuthoringContext?: StudyAgentCohortEditorContext
   /** R created this normal Atlas asset and awaits one immutable saved snapshot. */
   externalReviewSessionId?: string
   /** Read-only scope sent by R with an external review session. */
@@ -904,6 +991,7 @@ const props = defineProps<Props>()
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
   save: []
+  'save-and-continue': []
   apply: [conceptSet: ConceptSet]
   delete: [id: number | string]
 }>()
@@ -980,7 +1068,22 @@ const formValid = ref(false)
 const loading = ref(false)
 const hasUnsavedChanges = ref(false)
 const activeTab = ref<string>('selected') // Tab state for concept building - default to selected
+const previousWorkspaceTab = ref<string>('search')
+const assistantQuestionRequested = ref(false)
+const assistantFocusRequestId = ref(0)
 const studyAgentDrawerInstance = ref(0)
+
+function openCohortAssistant(focusQuestion: boolean) {
+  if (activeTab.value !== 'assistant') previousWorkspaceTab.value = activeTab.value
+  assistantQuestionRequested.value = focusQuestion
+  if (focusQuestion) assistantFocusRequestId.value += 1
+  activeTab.value = 'assistant'
+}
+
+function returnFromCohortAssistant() {
+  activeTab.value = previousWorkspaceTab.value === 'assistant' ? 'search' : previousWorkspaceTab.value
+  assistantQuestionRequested.value = false
+}
 
 // Inline concept detail view state. When set, the editor body swaps from the
 // tabs to a ConceptDetailContent panel with a back button. Cleared on back
@@ -1001,7 +1104,7 @@ function onViewConcept(payload: { conceptId: number; sourceKey: string }) {
 watch(
   () => studyAgentStore.pendingNarrative,
   narrative => {
-    if (narrative && props.modelValue) activeTab.value = 'assistant'
+    if (narrative && props.modelValue && !props.cohortHandoff) activeTab.value = 'assistant'
   },
 )
 
@@ -1025,11 +1128,13 @@ watch(
       // rather than the `isEditMode` computed, which is declared later (this
       // immediate watcher runs during setup, before that binding exists).
       const isExisting = props.conceptSet?.id !== undefined && props.conceptSet?.id !== null
-      activeTab.value = studyAgentStore.pendingNarrative
-        ? 'assistant'
-        : props.externalReviewSessionId
+      activeTab.value = props.cohortHandoff
+        ? 'search'
+        : studyAgentStore.pendingNarrative
+          ? 'assistant'
+          : props.externalReviewSessionId
           ? 'search'
-        : isExisting
+          : isExisting
           ? 'selected'
           : 'search'
       document.body.style.overflow = 'hidden'
@@ -1331,7 +1436,7 @@ watch(
 // Methods
 // ============================================================================
 
-async function onSave() {
+async function onSave(returnToCohort = true) {
   if (!formValid.value) return
 
   loading.value = true
@@ -1403,14 +1508,26 @@ async function onSave() {
             cohortHandoff.slotId,
             savedId,
           )
-          clearStudyAgentCohortConceptSetHandoff()
-          notify.success('Concept-set snapshot linked to the cohort building block. Continue the cohort review to complete the remaining blocks.')
-          await router.push({ path: '/cohorts', query: { studyAgentCohortSession: cohortHandoff.cohortSessionId } })
+          if (returnToCohort) {
+            clearStudyAgentCohortConceptSetHandoff()
+            notify.success('Concept set saved and linked to the cohort building block. Returning to cohort scope editing.')
+            await router.push({ path: '/cohorts', query: { studyAgentCohortSession: cohortHandoff.cohortSessionId } })
+          } else {
+            notify.success('Concept set saved and linked to the cohort building block. You can continue editing it here.')
+          }
         }
       }
       hasUnsavedChanges.value = false
-      emit('save')
-      emit('update:modelValue', false)
+      if (props.cohortHandoff && !returnToCohort) {
+        emit('save-and-continue')
+      } else {
+        emit('save')
+        emit('update:modelValue', false)
+      }
+    } else {
+      notify.danger('Concept set could not be saved', {
+        message: store.error || 'The server did not save this concept set. It remains open so you can correct the issue and try again.',
+      })
     }
   } catch (error) {
     notify.danger('Concept set was saved, but /ohdsi provenance could not be recorded', {
@@ -1885,6 +2002,7 @@ function closeJsonDialog() {
 .cs-editor__external-review dl { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; margin: 8px 0 0; }
 .cs-editor__external-review dt { font-weight: 600; }
 .cs-editor__external-review dd { margin: 0; }
+.cs-editor__cohort-handoff-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 
 /* Tabs rail nests against the page-shell visuals; pull the rail
  * across the full drawer width (cancel header padding) and keep

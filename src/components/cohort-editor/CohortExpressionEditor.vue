@@ -74,6 +74,16 @@
                   </AtlasList>
                 </AtlasMenu>
 
+                <AtlasButton
+                  v-if="props.showOhdsiHelp"
+                  variant="ghost"
+                  size="sm"
+                  prepend-icon="mdi-robot-outline"
+                  @click="emit('ask-ohdsi')"
+                >
+                  Ask /ohdsi about criteria
+                </AtlasButton>
+
                 <AtlasSpacer />
 
                 <AtlasMenu
@@ -315,12 +325,15 @@ import type {
 const props = defineProps<{
   expression: CohortExpression
   conceptSets: ConceptSetOption[]
+  showOhdsiHelp?: boolean
 }>()
 
 const emit = defineEmits<{
   'select-concept-set': [target: ConceptSetSelectionTarget | undefined]
   'edit-concept-set': [target: ConceptSetSelectionTarget | undefined]
   'clear-concept-set': []
+  'ask-ohdsi': []
+  'criteria-added': [type: EditableCriteriaKey]
 }>()
 
 const expression = computed(() => props.expression)
@@ -452,6 +465,7 @@ function observationDaysInput(value: number | string | null | undefined): number
 
 function addPrimaryCriteria(type: EditableCriteriaKey) {
   ensurePrimaryCriteriaList().push(CRITERIA_TYPE_BY_KEY[type].create())
+  emit("criteria-added", type)
 }
 
 function removePrimaryCriteria(criteriaToRemove: Criteria) {

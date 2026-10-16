@@ -58,6 +58,77 @@
     />
 
     <section
+      v-if="studyAgentAuthoringSession"
+      ref="studyAgentAuthoringTask"
+      class="cohort-builder__study-agent-task"
+      aria-label="/ohdsi cohort authoring task"
+    >
+      <div>
+        <p class="cohort-builder__study-agent-provenance-eyebrow">
+          /ohdsi cohort authoring task
+        </p>
+        <h2>{{ studyAgentAuthoringHeading }}</h2>
+        <p>{{ studyAgentAuthoringSummary }}</p>
+        <p class="cohort-builder__study-agent-task-boundary">
+          You can keep editing this cohort with normal Atlas tools. Changes you add here are not automatically covered by the original validated projection; use /ohdsi for guidance and review them before saving.
+        </p>
+      </div>
+      <AtlasButton
+        size="sm"
+        @click="toggleStudyAgentAuthoringDialogue"
+      >
+        {{ studyAgentAuthoringDialogueOpen ? 'Hide /ohdsi dialogue' : 'Ask /ohdsi about this cohort' }}
+      </AtlasButton>
+      <section
+        v-if="studyAgentAuthoringDialogueOpen"
+        class="cohort-builder__study-agent-refinement-dialogue"
+      >
+        <p class="cohort-builder__study-agent-refinement-label">
+          Ask /ohdsi about the cohort step you are working on
+        </p>
+        <textarea
+          ref="studyAgentAuthoringQuestion"
+          v-model="studyAgentAuthoringMessage"
+          aria-label="Ask /ohdsi about this cohort authoring task"
+          rows="3"
+          placeholder="For example: What inclusion or exclusion criteria should I consider next?"
+        />
+        <AtlasButton
+          size="sm"
+          :loading="studyAgentAuthoringLoading"
+          :disabled="!studyAgentAuthoringMessage.trim()"
+          @click="askStudyAgentAboutAuthoringTask"
+        >
+          Ask /ohdsi
+        </AtlasButton>
+        <AtlasAlert
+          v-if="studyAgentAuthoringError"
+          severity="danger"
+          class="mt-3"
+        >
+          {{ studyAgentAuthoringError }}
+        </AtlasAlert>
+        <div
+          v-if="studyAgentAuthoringDialogue"
+          class="cohort-builder__study-agent-refinement-response"
+        >
+          <h3>/ohdsi guidance</h3>
+          <p v-if="studyAgentAuthoringDialogue.answer">
+            {{ studyAgentAuthoringDialogue.answer }}
+          </p>
+          <ul v-if="authoringTaskNextActions.length">
+            <li
+              v-for="(action, index) in authoringTaskNextActions"
+              :key="index"
+            >
+              {{ action }}
+            </li>
+          </ul>
+        </div>
+      </section>
+    </section>
+
+    <section
       v-if="studyAgentProvenance?.linked"
       class="cohort-builder__study-agent-provenance"
       aria-label="/ohdsi provenance"
@@ -81,9 +152,9 @@
           class="cohort-builder__study-agent-provenance-action"
           size="sm"
           :loading="studyAgentReviewLoading"
-          @click="reviewStudyAgentCohort"
+          @click="toggleStudyAgentCohortReview"
         >
-          Review current definition with /ohdsi
+          {{ studyAgentReview ? 'Hide /ohdsi review' : 'Review current definition with /ohdsi' }}
         </AtlasButton>
         <AtlasAlert
           v-if="studyAgentReviewError"
@@ -308,9 +379,12 @@
       <CohortExpressionEditor
         :expression="expression"
         :concept-sets="conceptSetOptions"
+        :show-ohdsi-help="Boolean(studyAgentAuthoringSession)"
         @select-concept-set="onSelectConceptSet"
         @edit-concept-set="handleEditConceptSetFromTarget"
         @clear-concept-set="handleClearConceptSet"
+        @ask-ohdsi="openStudyAgentCriteriaGuidance"
+        @criteria-added="onStudyAgentCriteriaAdded"
       />
     </div>
     <!-- /.cohort-builder__steps -->
@@ -341,6 +415,7 @@
       :model-value="conceptSetsStore.editorOpen"
       :concept-set="conceptSetsStore.currentSet"
       embedded
+      :cohort-authoring-context="studyAgentConceptSetContext"
       @update:model-value="
         value => {
           if (!value) {
@@ -462,7 +537,7 @@
 
 <script setup lang="ts">
 import { AtlasAlert, AtlasButton, AtlasDialog, AtlasIcon, AtlasProgressCircular, AtlasSnackbar, AtlasSpacer } from '@/components/ui'
-import { ref, computed, onMounted, onBeforeUnmount, watch, toRef, toRaw } from 'vue'
+import { ref, computed, nextTick, onMounted, onBeforeUnmount, watch, toRef, toRaw } from 'vue'
 import { useRouter, useRoute, onBeforeRouteLeave } from 'vue-router'
 import { logger } from '@/utils/logger'
 import { useCohortStore, type CohortDocument } from '@/stores/cohort'
@@ -494,8 +569,8 @@ import VersionsTabContent from '@/components/versions/VersionsTabContent.vue'
 import type { VersionsConfig, User } from '@/components/versions/types'
 import { format, parseISO } from 'date-fns'
 import * as cohortDefinitionVersionsService from '@/services/cohort-definition-versions.service'
-import { continueStudyAgentCohortRefinementDialogue, getStudyAgentCohortDraft, getStudyAgentCohortProvenance, linkStudyAgentCohortDraft, reviewStudyAgentCohortDefinition } from '@/services/study-agent-cohort-definition.service'
-import type { StudyAgentCohortCritique, StudyAgentCohortProvenance, StudyAgentCohortRefinementDialogue } from '@/models/study-agent.types'
+import { askStudyAgentCohortAuthoringDialogue, continueStudyAgentCohortRefinementDialogue, getStudyAgentCohortDraft, getStudyAgentCohortProvenance, getStudyAgentCohortSpecification, linkStudyAgentCohortDraft, reviewStudyAgentCohortDefinition } from '@/services/study-agent-cohort-definition.service'
+import type { StudyAgentCohortCritique, StudyAgentCohortProvenance, StudyAgentCohortEditorContext, StudyAgentCohortRefinementDialogue, StudyAgentCohortSpecification } from '@/models/study-agent.types'
 import CohortBreadcrumb from './CohortBreadcrumb.vue'
 import CohortToolbarActions from './CohortToolbarActions.vue'
 import CohortToolbarStatus from './CohortToolbarStatus.vue'
@@ -562,6 +637,98 @@ const studyAgentRefinementMessage = ref('')
 const studyAgentRefinementDialogue = ref<StudyAgentCohortRefinementDialogue | null>(null)
 const studyAgentRefinementLoading = ref(false)
 const studyAgentRefinementError = ref('')
+const studyAgentAuthoringSpecification = ref<StudyAgentCohortSpecification | null>(null)
+const studyAgentAuthoringDialogueOpen = ref(false)
+const studyAgentAuthoringMessage = ref('')
+const studyAgentAuthoringDialogue = ref<StudyAgentCohortRefinementDialogue | null>(null)
+const studyAgentAuthoringLoading = ref(false)
+const studyAgentAuthoringError = ref('')
+const studyAgentAuthoringQuestion = ref<HTMLTextAreaElement | null>(null)
+const studyAgentAuthoringTask = ref<HTMLElement | null>(null)
+const studyAgentLastCriterion = ref<string>("")
+const studyAgentAuthoringSession = computed(() => {
+  const fromRoute = typeof route.query.studyAgentSession === 'string' ? route.query.studyAgentSession.trim() : ''
+  return fromRoute || studyAgentProvenance.value?.session_id || ''
+})
+const studyAgentAuthoringHeading = computed(() => {
+  const state = studyAgentAuthoringSpecification.value?.state
+  return state === 'draft_ready' ? 'Validated starting cohort definition' : 'Continue cohort-definition authoring'
+})
+const studyAgentAuthoringSummary = computed(() => {
+  const specification = studyAgentAuthoringSpecification.value
+  if (!specification) return 'This cohort was opened from an /ohdsi authoring task. You can continue with normal Atlas cohort editing.'
+  if (specification.projection?.supported === false) return specification.projection.reason || 'This plan has not been projected to a validated cohort definition. Continue with normal Atlas editing and review the remaining decisions.'
+  if (specification.state === 'draft_ready') return 'This is the validated starting definition from the reviewed scope. You can now refine it with normal Atlas cohort editing.'
+  return 'This cohort plan is still being reviewed. Continue with normal Atlas editing, then review outstanding decisions before relying on it.'
+})
+const authoringTaskNextActions = computed(() => {
+  const dialogue = studyAgentAuthoringDialogue.value
+  if (!dialogue) return []
+  if (Array.isArray(dialogue.suggested_next_actions)) return dialogue.suggested_next_actions
+  return dialogue.current_step_guidance ? (Array.isArray(dialogue.current_step_guidance) ? dialogue.current_step_guidance : [dialogue.current_step_guidance]) : []
+})
+const studyAgentConceptSetContext = computed<StudyAgentCohortEditorContext | undefined>(() => {
+  const sessionId = studyAgentAuthoringSession.value
+  if (!sessionId) return undefined
+  return {
+    session_id: sessionId,
+    narrative: studyAgentProvenance.value?.narrative || studyAgentAuthoringSpecification.value?.narrative,
+    specification_state: studyAgentAuthoringSpecification.value?.state,
+    projection: studyAgentAuthoringSpecification.value?.projection,
+    boundary: 'This concept set supports a criterion being added in the normal Atlas editor. Its policy and the cohort logic remain user-authored and require review before use.',
+  }
+})
+
+async function toggleStudyAgentAuthoringDialogue() {
+  if (studyAgentAuthoringDialogueOpen.value) {
+    studyAgentAuthoringDialogueOpen.value = false
+    return
+  }
+  studyAgentAuthoringDialogueOpen.value = true
+  await nextTick()
+  studyAgentAuthoringQuestion.value?.focus()
+}
+
+function onStudyAgentCriteriaAdded(type: string) {
+  studyAgentLastCriterion.value = type.replace("Occurrence", " occurrence").replace("Exposure", " exposure")
+}
+
+async function openStudyAgentCriteriaGuidance() {
+  if (!studyAgentAuthoringSession.value) return
+  studyAgentAuthoringDialogueOpen.value = true
+  if (!studyAgentAuthoringMessage.value.trim()) {
+    studyAgentAuthoringMessage.value = studyAgentLastCriterion.value
+      ? "I am adding or refining a " + studyAgentLastCriterion.value + " criterion. What should I consider?"
+      : "I am deciding which cohort criterion to add or refine. What should I consider?"
+  }
+  await nextTick()
+  studyAgentAuthoringTask.value?.scrollIntoView({ behavior: "smooth", block: "center" })
+  studyAgentAuthoringQuestion.value?.focus()
+}
+
+async function askStudyAgentAboutAuthoringTask() {
+  const sessionId = studyAgentAuthoringSession.value
+  if (!sessionId || !studyAgentAuthoringMessage.value.trim() || studyAgentAuthoringLoading.value) return
+  studyAgentAuthoringLoading.value = true
+  studyAgentAuthoringError.value = ''
+  try {
+    const response = await askStudyAgentCohortAuthoringDialogue(sessionId, studyAgentAuthoringMessage.value.trim(), 'logic_review', {
+      current_editor: 'atlas_cohort_definition',
+      cohort_editing_mode: 'normal_atlas_editing',
+      specification_state: studyAgentAuthoringSpecification.value?.state || 'draft_ready',
+      projection: studyAgentAuthoringSpecification.value?.projection || {},
+      boundary: 'Normal Atlas edits are user-authored and are not automatically covered by the original validated projection.',
+      ...(studyAgentLastCriterion.value ? { current_criterion: studyAgentLastCriterion.value } : {}),
+    })
+    studyAgentAuthoringDialogue.value = response.dialogue
+    studyAgentAuthoringMessage.value = ''
+  } catch (error) {
+    logger.warn('CohortBuilder', 'Unable to continue /ohdsi cohort authoring dialogue', error)
+    studyAgentAuthoringError.value = 'Unable to continue the /ohdsi cohort authoring dialogue.'
+  } finally {
+    studyAgentAuthoringLoading.value = false
+  }
+}
 const refinementNextActions = computed(() => {
   const dialogue = studyAgentRefinementDialogue.value
   if (!dialogue) return []
@@ -587,6 +754,15 @@ async function continueStudyAgentRefinementDialogue() {
   } finally {
     studyAgentRefinementLoading.value = false
   }
+}
+
+async function toggleStudyAgentCohortReview() {
+  if (studyAgentReview.value) {
+    studyAgentReview.value = null
+    studyAgentReviewError.value = ''
+    return
+  }
+  await reviewStudyAgentCohort()
 }
 
 async function reviewStudyAgentCohort() {
@@ -1032,6 +1208,14 @@ onMounted(async () => {
         const draft = await getStudyAgentCohortDraft(studyAgentSession)
         cohortStore.setCohort({ name: draft.name || 'New cohort', description: '', expression: draft.expression })
         cohortName.value = draft.name || 'New cohort'
+        try {
+          const specification = await getStudyAgentCohortSpecification(studyAgentSession)
+          studyAgentAuthoringSpecification.value = specification.cohort_specification.specification
+        } catch (specificationError) {
+          // A draft can predate the durable review-plan record. The task card
+          // still retains the session for advisory dialogue in that case.
+          logger.debug('CohortBuilder', 'No durable /ohdsi cohort specification available for draft', specificationError)
+        }
         markExpressionRevision()
       } catch (error) {
         logger.warn('CohortBuilder', 'Unable to load /ohdsi cohort draft', error)
@@ -1229,6 +1413,16 @@ async function loadCohort(id: string) {
     studyAgentRefinementDialogue.value = null
     studyAgentRefinementMessage.value = ''
     studyAgentRefinementError.value = ''
+    studyAgentAuthoringSpecification.value = null
+    const authoringSessionId = provenance?.linked ? provenance.session_id?.trim() : ''
+    if (authoringSessionId) {
+      try {
+        const specification = await getStudyAgentCohortSpecification(authoringSessionId)
+        studyAgentAuthoringSpecification.value = specification.cohort_specification.specification
+      } catch (specificationError) {
+        logger.debug('CohortBuilder', 'No durable /ohdsi cohort specification available for saved cohort', specificationError)
+      }
+    }
     if (atlasCohort.expressionType && atlasCohort.expressionType !== 'SIMPLE_EXPRESSION') {
       logger.error('CohortBuilder', `Unsupported expression type: ${atlasCohort.expressionType}`)
       failLoad(tv('components.cohortBuilder.loadError', 'Failed to load cohort'))
@@ -2413,6 +2607,32 @@ defineExpose({
   border-top: 1px solid rgb(var(--v-theme-outline-variant));
 }
 
+
+.cohort-builder__study-agent-task {
+  margin: 8px 0 16px;
+  padding: 16px 20px;
+  border-left: 4px solid rgb(var(--v-theme-primary));
+  background: rgb(var(--v-theme-surface-variant));
+}
+
+.cohort-builder__study-agent-task h2 {
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+
+.cohort-builder__study-agent-task p {
+  margin: 0;
+}
+
+.cohort-builder__study-agent-task > .atlas-button {
+  margin-top: 12px;
+}
+
+.cohort-builder__study-agent-task-boundary {
+  margin-top: 8px !important;
+  color: rgb(var(--v-theme-on-surface-variant));
+  font-size: 13px;
+}
 .cohort-builder__study-agent-refinement-label {
   margin: 0;
   font-weight: 600;

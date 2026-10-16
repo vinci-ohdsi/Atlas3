@@ -66,6 +66,7 @@ export interface StartStudyAgentConceptSetSessionRequest {
     mode: 'new' | 'extension'
     concept_set_id?: number | string
     source_key?: string
+    cohort_workflow?: Record<string, unknown>
     interaction_profile: StudyAgentConceptSetInteractionProfile
   }
 }
@@ -214,6 +215,7 @@ export interface StudyAgentCohortProvenance {
   linked: boolean
   review_revision?: number
   source_type?: string
+  session_id?: string
   acquisition_route?: StudyAgentCohortRoute
   phenotype_id?: string | null
   phenotype_name?: string | null
@@ -223,4 +225,13 @@ export interface StudyAgentCohortProvenance {
   narrative?: string
   created_at?: string
   approved_at?: string
+}
+
+/** Compact advisory context carried from the normal Atlas cohort editor into a nested concept-set editor. */
+export interface StudyAgentCohortEditorContext {
+  session_id: string
+  narrative?: string
+  specification_state?: string
+  projection?: { supported?: boolean; mode?: string; summary?: string; reason?: string; status?: string }
+  boundary?: string
 }

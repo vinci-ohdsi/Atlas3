@@ -69,7 +69,8 @@
     </AtlasAlert>
     <section
       v-if="conversionPreparation && !makeComputableSessionStarted"
-      class="study-agent-cohort-dialog__conversion"
+      ref="conversionPanel"
+      :class="['study-agent-cohort-dialog__conversion', { 'study-agent-cohort-dialog__conversion--updated': conversionFlash }]"
     >
       <h3>Choose a starting component for conversion</h3>
       <p>
@@ -290,7 +291,7 @@
       <AtlasCheckbox
         v-model="scope.windowsNone"
         class="study-agent-cohort-dialog__confirm"
-        label="I confirm the single-index fast path has no supporting, exclusion, setting, or temporal criteria."
+        label="I confirm this simple cohort uses only the primary index event—no additional conditions, exclusions, setting restrictions, or timing rules."
       />
       <AtlasCheckbox
         v-model="scope.confirmed"
@@ -384,7 +385,7 @@
         No local candidates were returned for the requested term. Open the primary concept-set review to search the normal Atlas vocabulary. Nothing is selected automatically.
       </p>
       <p v-else>
-        These link reusable concept-set assets to cohort criteria. They are not yet a saved cohort definition.
+        Open the normal Atlas concept-set editor to curate each reusable asset. Local candidate suggestions, when available, are optional and are not a complete concept set.
       </p>
       <article
         v-for="slot in cohortSpecification.concept_set_slots"
@@ -404,12 +405,11 @@
           </AtlasChip>
           <AtlasButton
             v-if="slot.asset_status !== 'reviewed'"
-            variant="secondary"
             size="sm"
             :disabled="loading"
             @click="openConceptSetWorkbench(slot.slot_id)"
           >
-            Review concept set
+            Open concept-set editor
           </AtlasButton>
         </div>
       </article>
@@ -558,12 +558,16 @@
         </AtlasButton>
       </template>
     </section>
-    <section
+    <details
       v-if="conceptCandidates.length"
       class="study-agent-cohort-dialog__results"
+      :open="hasReviewedPolicies"
     >
-      <h3>Review vocabulary candidates</h3>
-      <p>This is a bounded retrieval slice, not a complete concept set. Select only the policies you approve; no choice is inferred.</p>
+      <summary><strong>Optional local candidate suggestions</strong> — not a complete concept set</summary>
+      <p>
+        The normal Atlas concept-set editor is the recommended place to search and curate this clinical criterion.
+        These locally retrieved suggestions are bounded and optional; no policy is inferred.
+      </p>
       <article
         v-for="candidate in conceptCandidates"
         :key="candidate.concept_id"
@@ -620,7 +624,7 @@
           Confirm policies and create draft
         </AtlasButton>
       </AtlasAlert>
-    </section>
+    </details>
     <section
       v-if="candidates.length"
       class="study-agent-cohort-dialog__results"
@@ -637,6 +641,46 @@
         <p><strong>In review:</strong> the source record is marked as pending or otherwise not final. It is not a clinical-validity endorsement.</p>
         <p>The shortlist is intentionally opinionated. You can inspect the other ranked candidates below, browse the library, or search again.</p>
       </details>
+      <section
+        v-if="sourceEvidence"
+        ref="sourceEvidencePanel"
+        :class="['study-agent-cohort-dialog__source-evidence', { 'study-agent-cohort-dialog__source-evidence--updated': sourceEvidenceFlash }]"
+      >
+        <h4>Source phenotype evidence: {{ text(sourceEvidence.phenotype_name) }}</h4>
+        <p>This is review evidence only. It does not select concepts, change scope, or create a cohort definition.</p>
+        <p v-if="text(sourceEvidence.clinical_description)">
+          {{ text(sourceEvidence.clinical_description) }}
+        </p>
+        <p v-if="text(sourceEvidence.adaptation_notes)">
+          <strong>Adaptation note:</strong> {{ text(sourceEvidence.adaptation_notes) }}
+        </p>
+        <p><strong>Computability:</strong> {{ label(text(sourceEvidence.computability_status)) || 'Not available' }}<span v-if="text(sourceEvidence.executable_definition_status)"> · {{ text(sourceEvidence.executable_definition_status) }}</span></p>
+        <details v-if="Array.isArray(sourceEvidence.code_systems) || Array.isArray(record(sourceEvidence.provenance).publications)">
+          <summary>Evidence details</summary>
+          <ul v-if="Array.isArray(sourceEvidence.code_systems)">
+            <li
+              v-for="system in sourceEvidence.code_systems"
+              :key="text(record(system).name)"
+            >
+              {{ text(record(system).name) }}: {{ Number(record(system).code_count) || 0 }} source code{{ Number(record(system).code_count) === 1 ? '' : 's' }}
+            </li>
+          </ul>
+          <ul v-if="Array.isArray(record(sourceEvidence.provenance).publications)">
+            <li
+              v-for="publication in record(sourceEvidence.provenance).publications"
+              :key="text(record(publication).title)"
+            >
+              <a
+                v-if="text(record(publication).link)"
+                :href="text(record(publication).link)"
+                target="_blank"
+                rel="noopener noreferrer"
+              >{{ text(record(publication).title) || 'Source publication' }}</a>
+              <span v-else>{{ text(record(publication).title) }}</span>
+            </li>
+          </ul>
+        </details>
+      </section>
       <article
         v-for="candidate in candidates"
         :key="candidate.phenotype_id"
@@ -687,6 +731,14 @@
           >
             {{ sourceReviewLabel(candidate.source_status) }}
           </AtlasChip>
+          <AtlasButton
+            size="sm"
+            variant="secondary"
+            :loading="sourceEvidenceLoadingId === candidate.phenotype_id"
+            @click="reviewSourceEvidence(candidate)"
+          >
+            Review source evidence
+          </AtlasButton>
           <AtlasButton
             v-if="candidate.computability_status === 'circe_available'"
             size="sm"
@@ -762,6 +814,14 @@
             >
               {{ label(candidate.computability_status) }}
             </AtlasChip>
+            <AtlasButton
+              size="sm"
+              variant="secondary"
+              :loading="sourceEvidenceLoadingId === candidate.phenotype_id"
+              @click="reviewSourceEvidence(candidate)"
+            >
+              Review source evidence
+            </AtlasButton>
             <AtlasButton
               v-if="candidate.computability_status === 'circe_available'"
               size="sm"
@@ -839,6 +899,14 @@
               {{ label(candidate.computability_status) }}
             </AtlasChip>
             <AtlasButton
+              size="sm"
+              variant="secondary"
+              :loading="sourceEvidenceLoadingId === candidate.phenotype_id"
+              @click="reviewSourceEvidence(candidate)"
+            >
+              Review source evidence
+            </AtlasButton>
+            <AtlasButton
               v-if="candidate.computability_status === 'circe_available'"
               size="sm"
               :loading="importingId === candidate.phenotype_id"
@@ -890,10 +958,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { AtlasAlert, AtlasButton, AtlasCheckbox, AtlasChip, AtlasDialog, AtlasSelect, AtlasTextField } from '@/components/ui'
-import { askStudyAgentCohortAuthoringDialogue, createStudyAgentMultiComponentSpecification, getStudyAgentCohortSpecification, importStudyAgentPhenotypeDraft, projectStudyAgentCohortSpecification, reopenStudyAgentCohortSpecificationLogic, requestStudyAgentCohortRecommendations, searchStudyAgentPhenotypeLibrary, startStudyAgentCohortSession, continueStudyAgentMakeComputable, confirmStudyAgentCohortSpecificationLogic, prepareStudyAgentPhenotypeConversion } from '@/services/study-agent-cohort-definition.service'
+import { askStudyAgentCohortAuthoringDialogue, createStudyAgentMultiComponentSpecification, getStudyAgentCohortSpecification, getStudyAgentPhenotypeEvidence, importStudyAgentPhenotypeDraft, projectStudyAgentCohortSpecification, reopenStudyAgentCohortSpecificationLogic, requestStudyAgentCohortRecommendations, searchStudyAgentPhenotypeLibrary, startStudyAgentCohortSession, continueStudyAgentMakeComputable, confirmStudyAgentCohortSpecificationLogic, prepareStudyAgentPhenotypeConversion } from '@/services/study-agent-cohort-definition.service'
 import { setStudyAgentCohortConceptSetHandoff } from '@/stores/study-agent-cohort-concept-set-handoff'
 import type { StudyAgentCohortRefinementDialogue, StudyAgentCohortRoute, StudyAgentCohortSpecification, StudyAgentCohortSpecificationComponent, StudyAgentPhenotypeCandidate } from '@/models/study-agent.types'
 
@@ -921,6 +989,14 @@ const authoringDialogueMessage = ref('')
 const authoringDialogue = ref<StudyAgentCohortRefinementDialogue | null>(null)
 const authoringDialogueLoading = ref(false)
 const authoringDialogueError = ref('')
+const sourceEvidence = ref<Record<string, unknown> | null>(null)
+const sourceEvidenceLoadingId = ref<string | null>(null)
+const sourceEvidencePanel = ref<HTMLElement | null>(null)
+const sourceEvidenceFlash = ref(false)
+let sourceEvidenceFlashTimer: ReturnType<typeof setTimeout> | undefined
+const conversionPanel = ref<HTMLElement | null>(null)
+const conversionFlash = ref(false)
+let conversionFlashTimer: ReturnType<typeof setTimeout> | undefined
 const scopeQuestions = ref<string[]>([])
 const scope = ref({ indexEvent: '', domain: '', entryLimit: '', priorObservation: null as number | null, indexDayBoundary: '', exitStrategy: '', windowsNone: false, confirmed: false })
 const conceptCandidates = ref<Array<{ concept_id: number; concept_name: string; vocabulary_id: string; domain_id: string; concept_class_id: string; include: boolean; descendants: boolean; mapped: boolean; exclude: boolean }>>([])
@@ -1246,6 +1322,10 @@ async function openConceptSetWorkbench(slotId: string) {
     searchTerm: scope.value.indexEvent.trim() || slot.label || '',
     sourcePhenotypeName: selectedSourceContext.value?.phenotype_name,
     sourceSummary: selectedSourceContext.value?.source_summary,
+    cohortNarrative: narrative.value.trim(),
+    landingPlan: initialLandingPlan.value,
+    landingAnswer: initialLandingAnswer.value,
+    advisorySummary: authoringDialogue.value?.answer?.slice(0, 1000),
   })
   open.value = false
   await router.push({ path: '/concepts', query: { tab: 'sets', cohortStudyAgentSession: sessionId, cohortConceptSetSlot: slotId, cohortConceptSetLabel: slot.label || 'Cohort concept set', cohortConceptSetDomain: binding.domain, cohortCriterionRole: binding.criterion_role } })
@@ -1544,6 +1624,13 @@ async function askAuthoringDialogue() {
       } : {}),
       active_acquisition_route: route.value,
       bounded_candidate_count: conceptCandidates.value.length || visiblePhenotypeCandidates.value.length,
+      reviewed_source_evidence: sourceEvidence.value ? {
+        phenotype_id: text(sourceEvidence.value.phenotype_id),
+        phenotype_name: text(sourceEvidence.value.phenotype_name),
+        computability_status: text(sourceEvidence.value.computability_status),
+        clinical_description: text(sourceEvidence.value.clinical_description).slice(0, 1200),
+        adaptation_notes: text(sourceEvidence.value.adaptation_notes).slice(0, 600),
+      } : {},
       visible_candidate_summaries: visiblePhenotypeCandidates.value.map(candidate => ({
         phenotype_id: candidate.phenotype_id,
         phenotype_name: candidate.phenotype_name,
@@ -1562,6 +1649,29 @@ async function askAuthoringDialogue() {
   }
 }
 
+async function reviewSourceEvidence(candidate: StudyAgentPhenotypeCandidate) {
+  if (!sessionId || sourceEvidenceLoadingId.value) return
+  sourceEvidenceLoadingId.value = candidate.phenotype_id
+  error.value = ''
+  try {
+    const response = await getStudyAgentPhenotypeEvidence(sessionId, candidate.phenotype_id, {
+      acquisition_route: route.value,
+      phenotype_name: candidate.phenotype_name,
+      study_narrative: narrative.value.trim(),
+    })
+    sourceEvidence.value = response.evidence
+    await nextTick()
+    sourceEvidencePanel.value?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    sourceEvidenceFlash.value = true
+    if (sourceEvidenceFlashTimer) clearTimeout(sourceEvidenceFlashTimer)
+    sourceEvidenceFlashTimer = setTimeout(() => { sourceEvidenceFlash.value = false }, 1800)
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : 'Unable to retrieve source phenotype evidence.'
+  } finally {
+    sourceEvidenceLoadingId.value = null
+  }
+}
+
 async function startConversion(candidate: StudyAgentPhenotypeCandidate) {
   if (!sessionId || convertingId.value) return
   convertingId.value = candidate.phenotype_id
@@ -1571,10 +1681,16 @@ async function startConversion(candidate: StudyAgentPhenotypeCandidate) {
       acquisition_route: route.value,
       phenotype_name: candidate.phenotype_name,
       study_narrative: narrative.value.trim(),
+      reviewed_source_evidence: sourceEvidence.value?.phenotype_id === candidate.phenotype_id ? sourceEvidence.value : {},
     })
     conversionPreparation.value = response.conversion
     selectedConversionOption.value = ''
     manualConversionTerm.value = ''
+    await nextTick()
+    conversionPanel.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    conversionFlash.value = true
+    if (conversionFlashTimer) clearTimeout(conversionFlashTimer)
+    conversionFlashTimer = setTimeout(() => { conversionFlash.value = false }, 1800)
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Unable to prepare source phenotype evidence for conversion.'
   } finally {
@@ -1631,7 +1747,7 @@ async function importDraft(candidate: StudyAgentPhenotypeCandidate) {
     await router.push({ path: '/cohorts/new', query: { studyAgentSession: sessionId } })
   } catch (err) { error.value = err instanceof Error ? err.message : 'Unable to open the phenotype draft.' } finally { importingId.value = null }
 }
-function reset() { open.value = false; narrative.value = ''; route.value = 'ai_search'; convertingId.value = null; conversionPreparation.value = null; selectedConversionOption.value = ''; manualConversionTerm.value = ''; selectedSourceContext.value = null; authoringDialogueMessage.value = ''; authoringDialogue.value = null; authoringDialogueLoading.value = false; authoringDialogueError.value = ''; candidates.value = []; rankedCandidates.value = []; retrievalCandidates.value = []; showRankedCandidates.value = false; showRetrievalCandidates.value = false; candidateOffset.value = 0; lastSearchedNarrative.value = ''; conceptCandidates.value = []; cohortSpecification.value = null; makeComputableSessionStarted.value = false; lastCandidateRequestIndexEvent.value = ''; componentPlanning.value = false; componentPlanCreated.value = false; components.value = []; logicRelationships.value = {}; supportingWindows.value = {}; logicExitType.value = 'observation'; logicExitAnchor.value = 'endDate'; logicExitOffset.value = null; supportingOperator.value = 'ALL'; logicBindingsConfirmed.value = false; logicConfirmed.value = false; scopeQuestions.value = []; showPolicyConfirmation.value = false; scope.value = { indexEvent: '', domain: '', entryLimit: '', priorObservation: null, indexDayBoundary: '', exitStrategy: '', windowsNone: false, confirmed: false }; error.value = ''; sessionId = '' }
+function reset() { open.value = false; narrative.value = ''; route.value = 'ai_search'; convertingId.value = null; conversionPreparation.value = null; selectedConversionOption.value = ''; manualConversionTerm.value = ''; selectedSourceContext.value = null; authoringDialogueMessage.value = ''; authoringDialogue.value = null; authoringDialogueLoading.value = false; authoringDialogueError.value = ''; sourceEvidence.value = null; sourceEvidenceLoadingId.value = null; sourceEvidenceFlash.value = false; conversionFlash.value = false; candidates.value = []; rankedCandidates.value = []; retrievalCandidates.value = []; showRankedCandidates.value = false; showRetrievalCandidates.value = false; candidateOffset.value = 0; lastSearchedNarrative.value = ''; conceptCandidates.value = []; cohortSpecification.value = null; makeComputableSessionStarted.value = false; lastCandidateRequestIndexEvent.value = ''; componentPlanning.value = false; componentPlanCreated.value = false; components.value = []; logicRelationships.value = {}; supportingWindows.value = {}; logicExitType.value = 'observation'; logicExitAnchor.value = 'endDate'; logicExitOffset.value = null; supportingOperator.value = 'ALL'; logicBindingsConfirmed.value = false; logicConfirmed.value = false; scopeQuestions.value = []; showPolicyConfirmation.value = false; scope.value = { indexEvent: '', domain: '', entryLimit: '', priorObservation: null, indexDayBoundary: '', exitStrategy: '', windowsNone: false, confirmed: false }; error.value = ''; sessionId = '' }
 watch(
   () => [open.value, props.resumeSessionId, props.initialNarrative] as const,
   async ([isOpen, resumeSessionId]) => {
@@ -1691,6 +1807,10 @@ watch(
 .study-agent-cohort-dialog__component-plan { margin-top: 16px; padding: 14px; border: 1px solid rgb(var(--v-theme-outline-variant)); border-radius: 8px; }
 .study-agent-cohort-dialog__confirm { display: block; margin-top: 12px; }
 .study-agent-cohort-dialog__policy { display: grid; gap: 6px; white-space: nowrap; }
+.study-agent-cohort-dialog__conversion--updated { animation: study-agent-evidence-highlight 1.8s ease-out; }
+.study-agent-cohort-dialog__source-evidence { margin: 14px 0; padding: 14px; border: 1px solid var(--atlas-color-outline); border-radius: 8px; background: var(--atlas-color-surface, #fff); transition: background-color .25s ease, box-shadow .25s ease; }
+.study-agent-cohort-dialog__source-evidence--updated { animation: study-agent-evidence-highlight 1.8s ease-out; }
+@keyframes study-agent-evidence-highlight { 0%, 55% { background: rgba(var(--v-theme-primary), .12); box-shadow: 0 0 0 3px rgba(var(--v-theme-primary), .16); } 100% { background: var(--atlas-color-surface, #fff); box-shadow: none; } }
 .study-agent-cohort-dialog__candidate { display: flex; justify-content: space-between; gap: 16px; padding: 14px 0; border-top: 1px solid var(--atlas-color-outline); }
 .study-agent-cohort-dialog__candidate p { margin: 4px 0; }
 .study-agent-cohort-dialog__candidate-source { display: block; margin-top: 4px; color: var(--atlas-color-text-secondary); }

@@ -16,6 +16,7 @@
 
       <AtlasMenu
         v-model="menuOpen"
+        :z-index="2201"
         :close-on-content-click="false"
         location="bottom end"
         offset="8"

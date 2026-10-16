@@ -33,6 +33,11 @@ export function prepareStudyAgentPhenotypeConversion(sessionId: string, phenotyp
   return httpPost<{ conversion: Record<string, unknown> }>(`${BASE}/${encodeURIComponent(sessionId)}/phenotypes/${encodeURIComponent(phenotypeId)}/conversion-prepare`, { recommendation_context: recommendationContext })
 }
 
+/** Bounded, read-only source evidence; it does not select concepts or create a cohort. */
+export function getStudyAgentPhenotypeEvidence(sessionId: string, phenotypeId: string, recommendationContext: Record<string, unknown> = {}): Promise<{ review_only: boolean; phenotype_status: string; evidence: Record<string, unknown> }> {
+  return httpPost<{ review_only: boolean; phenotype_status: string; evidence: Record<string, unknown> }>(`${BASE}/${encodeURIComponent(sessionId)}/phenotypes/${encodeURIComponent(phenotypeId)}/evidence`, { recommendation_context: recommendationContext })
+}
+
 export function askStudyAgentCohortAuthoringDialogue(sessionId: string, message: string, stage: string, context: Record<string, unknown> = {}): Promise<{ dialogue: StudyAgentCohortRefinementDialogue }> {
   return httpPost<{ dialogue: StudyAgentCohortRefinementDialogue }>(`${BASE}/${encodeURIComponent(sessionId)}/dialogue`, { message, stage, context })
 }
